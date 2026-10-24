@@ -4,6 +4,7 @@
 
 #include "stdafx.h"
 #include <algorithm>
+#include <utility>
 #include "constants.h"
 #include "connection_impl.h"
 #include "negotiate.h"
@@ -13,28 +14,47 @@
 #include "default_http_client.h"
 #include "case_insensitive_comparison_utils.h"
 #include "completion_event.h"
-#include <assert.h>
+#include <cassert>
 #include "signalrclient/websocket_client.h"
 #include "default_websocket_client.h"
 #include "signalr_default_scheduler.h"
 
 namespace signalr
 {
-    std::shared_ptr<connection_impl> connection_impl::create(const std::string& url, trace_level trace_level, const std::shared_ptr<log_writer>& log_writer,
-        std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory, std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory, const bool skip_negotiation)
+    std::shared_ptr<connection_impl> connection_impl::create(
+        const std::string& url, const trace_level trace_level, const std::shared_ptr<log_writer>& log_writer,
+        const log_entry_handler& log_entry_handler,
+        const std::function<std::shared_ptr<http_client>(const signalr_client_config&)>& http_client_factory,
+        const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_factory,
+        const bool skip_negotiation
+    )
     {
-        return std::shared_ptr<connection_impl>(new connection_impl(url, trace_level,
-            log_writer ? log_writer : std::make_shared<trace_log_writer>(), http_client_factory, websocket_factory, skip_negotiation));
+        return std::shared_ptr<connection_impl>(
+            new connection_impl(
+                url, trace_level, log_writer ? log_writer : std::make_shared<trace_log_writer>(), log_entry_handler,
+                http_client_factory, websocket_factory, skip_negotiation
+            )
+        );
     }
 
-    connection_impl::connection_impl(const std::string& url, trace_level trace_level, const std::shared_ptr<log_writer>& log_writer,
-        std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory, std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory, const bool skip_negotiation)
-        : m_base_url(url), m_connection_state(connection_state::disconnected), m_logger(log_writer, trace_level), m_transport(nullptr), m_skip_negotiation(skip_negotiation),
-        m_message_received([](const std::string&) noexcept {}), m_disconnected([](std::exception_ptr) noexcept {}), m_disconnect_cts(std::make_shared<cancellation_token_source>())
+    connection_impl::connection_impl(
+        std::string url, const trace_level trace_level, const std::shared_ptr<log_writer>& log_writer,
+        const log_entry_handler& log_entry_handler,
+        const std::function<std::shared_ptr<http_client>(const signalr_client_config&)>& http_client_factory,
+        const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_factory,
+        const bool skip_negotiation
+    ) : m_base_url(std::move(url))
+      , m_connection_state(connection_state::disconnected)
+      , m_logger(log_writer, trace_level, log_entry_handler)
+      , m_transport(nullptr)
+      , m_skip_negotiation(skip_negotiation)
+      , m_message_received([](const std::string&) noexcept {})
+      , m_disconnected([](std::exception_ptr) noexcept {})
+      , m_disconnect_cts(std::make_shared<cancellation_token_source>())
     {
         if (http_client_factory != nullptr)
         {
-            m_http_client_factory = std::move(http_client_factory);
+            m_http_client_factory = http_client_factory;
         }
         else
         {
@@ -52,7 +72,9 @@ namespace signalr
 #endif
         }
 
-        m_transport_factory = std::unique_ptr<transport_factory>(new transport_factory(m_http_client_factory, websocket_factory));
+        m_transport_factory = std::unique_ptr<transport_factory>(
+            new transport_factory(m_http_client_factory, websocket_factory)
+        );
     }
 
     connection_impl::~connection_impl()

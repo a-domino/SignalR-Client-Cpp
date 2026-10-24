@@ -2,9 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-#include "stdafx.h"
 #include "signalrclient/hub_connection_builder.h"
 #include <stdexcept>
+#include <utility>
 #include "json_hub_protocol.h"
 #include "messagepack_hub_protocol.h"
 
@@ -12,7 +12,7 @@ namespace signalr
 {
     hub_connection_builder hub_connection_builder::create(const std::string& url)
     {
-        return hub_connection_builder(url);
+        return {url};
     }
 
     hub_connection_builder::hub_connection_builder(const std::string& url)
@@ -35,40 +35,41 @@ namespace signalr
         m_url = std::move(rhs.m_url);
         m_logger = std::move(rhs.m_logger);
         m_log_level = rhs.m_log_level;
+        m_websocket_factory = std::move(rhs.m_websocket_factory);
+        m_http_client_factory = std::move(rhs.m_http_client_factory);
+        m_skip_negotiation = rhs.m_skip_negotiation;
+        m_use_messagepack = rhs.m_use_messagepack;
 
         return *this;
     }
 
-    hub_connection_builder& hub_connection_builder::operator=(const hub_connection_builder& rhs)
-    {
-        m_url = rhs.m_url;
-        m_logger = rhs.m_logger;
-        m_log_level = rhs.m_log_level;
+    hub_connection_builder& hub_connection_builder::operator=(const hub_connection_builder& rhs) = default;
 
-        return *this;
-    }
-
-    hub_connection_builder::~hub_connection_builder()
-    {}
+    hub_connection_builder::~hub_connection_builder() = default;
 
     hub_connection_builder& hub_connection_builder::with_logging(std::shared_ptr<log_writer> logger, trace_level logLevel)
     {
-        m_logger = logger;
+        m_logger = std::move(logger);
         m_log_level = logLevel;
 
         return *this;
     }
 
+    hub_connection_builder& hub_connection_builder::with_log_entry_handler(const log_entry_handler& logEntryHandler) {
+        m_log_entry_handler = logEntryHandler;
+        return *this;
+    }
+
     hub_connection_builder& hub_connection_builder::with_websocket_factory(std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> factory)
     {
-        m_websocket_factory = factory;
+        m_websocket_factory = std::move(factory);
 
         return *this;
     }
 
     hub_connection_builder& hub_connection_builder::with_http_client_factory(std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory)
     {
-        m_http_client_factory = http_client_factory;
+        m_http_client_factory = std::move(http_client_factory);
 
         return *this;
     }
@@ -115,6 +116,9 @@ namespace signalr
             hub_protocol = std::unique_ptr<json_hub_protocol>(new json_hub_protocol());
         }
 
-        return hub_connection(m_url, std::move(hub_protocol), m_log_level, m_logger, m_http_client_factory, m_websocket_factory, m_skip_negotiation);
+        return hub_connection(
+            m_url, std::move(hub_protocol), m_log_level, m_logger, m_log_entry_handler, m_http_client_factory,
+            m_websocket_factory, m_skip_negotiation
+        );
     }
 }

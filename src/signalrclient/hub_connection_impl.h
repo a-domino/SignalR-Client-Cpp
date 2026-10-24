@@ -26,9 +26,13 @@ namespace signalr
     class hub_connection_impl : public std::enable_shared_from_this<hub_connection_impl>
     {
     public:
-        static std::shared_ptr<hub_connection_impl> create(const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol,
-            trace_level trace_level, const std::shared_ptr<log_writer>& log_writer, std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory,
-            std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory, bool skip_negotiation = false);
+        static std::shared_ptr<hub_connection_impl> create(
+            const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol, trace_level trace_level,
+            const std::shared_ptr<log_writer>& log_writer, const log_entry_handler& log_entry_handler,
+            std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory,
+            std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory,
+            bool skip_negotiation = false
+        );
 
         hub_connection_impl(const hub_connection_impl&) = delete;
         hub_connection_impl& operator=(const hub_connection_impl&) = delete;
@@ -48,10 +52,13 @@ namespace signalr
         void set_disconnected(const std::function<void(std::exception_ptr)>& disconnected);
 
     private:
-        hub_connection_impl(const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol, trace_level trace_level,
-            const std::shared_ptr<log_writer>& log_writer, std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory,
+        hub_connection_impl(
+            const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol, trace_level trace_level,
+            const std::shared_ptr<log_writer>& log_writer, const log_entry_handler& log_entry_handler,
+            std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory,
             std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory,
-            bool skip_negotiation);
+            bool skip_negotiation
+        );
 
         std::shared_ptr<connection_impl> m_connection;
         logger m_logger;

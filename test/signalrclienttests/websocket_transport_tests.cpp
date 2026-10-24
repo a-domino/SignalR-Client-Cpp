@@ -696,7 +696,8 @@ private:
     std::function<void(const std::string&, std::exception_ptr)> m_receive_callback;
 };
 
-// validates that a 3rd party websocket client implementation wont cause a memory leak if it caches the callbacks passed from the websocket_transport
+// validates that a 3rd party websocket client implementation wont cause a memory leak if it caches the callbacks
+// passed from the websocket_transport
 TEST(websocket_client_custom_impl, caching_callbacks_does_not_leak)
 {
     auto ws_transport = websocket_transport::create(
@@ -704,8 +705,10 @@ TEST(websocket_client_custom_impl, caching_callbacks_does_not_leak)
         {
             auto client = std::make_shared<caching_websocket_client>();
             return client;
-        }, signalr_client_config{},
-        logger(std::make_shared<trace_log_writer>(), trace_level::none));
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none, nullptr)
+    );
 
     ws_transport->start("ws://fakeuri.org", [](std::exception_ptr) {});
     auto mre = manual_reset_event<void>();

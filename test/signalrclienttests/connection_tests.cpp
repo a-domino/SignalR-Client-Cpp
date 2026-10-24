@@ -2,6 +2,8 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+#include <utility>
+
 #include "stdafx.h"
 #include "test_utils.h"
 #include "test_websocket_client.h"
@@ -10,20 +12,24 @@
 #include "memory_log_writer.h"
 #include "signalr_default_scheduler.h"
 #include "signalrclient/signalr_exception.h"
-#include "signalrclient/web_exception.h"
 #include "test_http_client.h"
 
 using namespace signalr;
 
-static std::shared_ptr<connection_impl> create_connection(std::shared_ptr<test_websocket_client> websocket_client = create_test_websocket_client(),
-    std::shared_ptr<log_writer> log_writer = std::make_shared<memory_log_writer>(), trace_level trace_level = trace_level::verbose)
+static std::shared_ptr<connection_impl> create_connection(
+    const std::shared_ptr<test_websocket_client>& websocket_client = create_test_websocket_client(),
+    const std::shared_ptr<log_writer>& log_writer = std::make_shared<memory_log_writer>(),
+    trace_level trace_level = trace_level::verbose
+)
 {
-    return connection_impl::create(create_uri(), trace_level, log_writer, create_test_http_client(),
+    return connection_impl::create(
+        create_uri(), trace_level, log_writer, nullptr, create_test_http_client(),
         [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 }
 
 TEST(connection_impl_connection_state, initial_connection_state_is_disconnected)
@@ -40,7 +46,7 @@ TEST(connection_impl_start, cannot_start_non_disconnected_exception)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -49,7 +55,7 @@ TEST(connection_impl_start, cannot_start_non_disconnected_exception)
     {
         connection->start([&mre](std::exception_ptr exception)
             {
-                mre.set(exception);
+                mre.set(std::move(exception));
             });
         mre.get();
         ASSERT_TRUE(false); // exception not thrown
@@ -66,8 +72,8 @@ TEST(connection_impl_start, connection_state_is_connecting_when_connection_is_be
 
     auto state_mre = manual_reset_event<void>();
     auto websocket_client = create_test_websocket_client(
-        /* send function */ [](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(std::make_exception_ptr(std::runtime_error("should not be invoked"))); },
-        /* connect function */[&state_mre](const std::string&, std::function<void(std::exception_ptr)> callback)
+        /* send function */ [](const std::string&, const std::function<void(std::exception_ptr)>& callback) { callback(std::make_exception_ptr(std::runtime_error("should not be invoked"))); },
+        /* connect function */[&state_mre](const std::string&, const std::function<void(std::exception_ptr)>& callback)
         {
             state_mre.get();
             callback(std::make_exception_ptr(std::runtime_error("connecting failed")));
@@ -78,7 +84,7 @@ TEST(connection_impl_start, connection_state_is_connecting_when_connection_is_be
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     ASSERT_EQ(connection->get_connection_state(), connection_state::connecting);
@@ -101,7 +107,7 @@ TEST(connection_impl_start, connection_state_is_connected_when_connection_establ
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
     mre.get();
     ASSERT_EQ(connection->get_connection_state(), connection_state::connected);
@@ -109,22 +115,24 @@ TEST(connection_impl_start, connection_state_is_connected_when_connection_establ
 
 TEST(connection_impl_start, connection_state_is_disconnected_when_connection_cannot_be_established)
 {
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string&, http_request, cancellation_token)
-        {
-            return http_response{ 404, "" };
-        }));
+    auto http_client = std::make_shared<test_http_client>([](const std::string&, http_request, cancellation_token) {
+        return http_response{404, ""};
+    });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::none, std::make_shared<memory_log_writer>(),
+        connection_impl::create(
+            create_uri(), trace_level::none, std::make_shared<memory_log_writer>(), nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, nullptr);
+            },
+            nullptr
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -143,13 +151,14 @@ TEST(connection_impl_start, throws_for_invalid_uri)
 
     auto websocket_client = create_test_websocket_client();
 
-    auto connection = connection_impl::create(":1\t ä bad_uri&a=b", trace_level::error, writer, create_test_http_client(),
+    auto connection = connection_impl::create(
+        ":1\t ä bad_uri&a=b", trace_level::error, writer, nullptr, create_test_http_client(),
         [websocket_client](const signalr_client_config&) { return websocket_client; });
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -178,17 +187,19 @@ TEST(connection_impl_start, start_sets_id_query_string)
             callback(std::make_exception_ptr(std::runtime_error("connecting failed")));
         });
 
-    auto connection = connection_impl::create(create_uri(""), trace_level::error, writer, create_test_http_client(),
+    auto connection = connection_impl::create(
+        create_uri(""), trace_level::error, writer, nullptr, create_test_http_client(),
         [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -217,17 +228,19 @@ TEST(connection_impl_start, start_appends_id_query_string)
             callback(std::make_exception_ptr(std::runtime_error("connecting failed")));
         });
 
-    auto connection = connection_impl::create(create_uri("a=b&c=d"), trace_level::error,
-        writer, create_test_http_client(), [websocket_client](const signalr_client_config& config)
+    auto connection = connection_impl::create(
+        create_uri("a=b&c=d"), trace_level::error, writer, nullptr, create_test_http_client(),
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -247,22 +260,24 @@ TEST(connection_impl_start, start_logs_exceptions)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string&, http_request, cancellation_token)
-        {
-            return http_response{ 404, "" };
-        }));
+    auto http_client = std::make_shared<test_http_client>([](const std::string&, http_request, cancellation_token) {
+        return http_response{404, ""};
+    });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::error, writer,
+        connection_impl::create(
+            create_uri(), trace_level::error, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, nullptr);
+            },
+            nullptr
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -280,24 +295,27 @@ TEST(connection_impl_start, start_logs_exceptions)
 
 TEST(connection_impl_start, start_propagates_exceptions_from_negotiate)
 {
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string&, http_request, cancellation_token) -> http_response
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [](const std::string&, http_request, cancellation_token) -> http_response {
             throw custom_exception();
-        }));
+        });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::none,
-            std::make_shared<memory_log_writer>(), [http_client](const signalr_client_config& config) {
+        connection_impl::create(
+            create_uri(), trace_level::none, std::make_shared<memory_log_writer>(), nullptr,
+            [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -327,7 +345,7 @@ TEST(connection_impl_start, start_fails_if_transport_connect_throws)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -361,14 +379,14 @@ TEST(connection_impl_send, send_fails_if_transport_fails_when_receiving_messages
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->send("message", transfer_format::text, [&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -390,24 +408,26 @@ TEST(connection_impl_start, start_fails_if_negotiate_request_fails)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string&, http_request, cancellation_token)
-        {
-            return http_response{ 400, "" };
-        }));
+    auto http_client = std::make_shared<test_http_client>([](const std::string&, http_request, cancellation_token) {
+        return http_response{400, ""};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -425,15 +445,14 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_has_error)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
-                ? "{ \"error\": \"bad negotiate\" }"
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
+                ? R"({ "error": "bad negotiate" })"
                 : "";
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto connect_mre = manual_reset_event<void>();
     auto websocket_client = std::make_shared<test_websocket_client>();
@@ -444,16 +463,19 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_has_error)
         });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -473,29 +495,31 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_does_not_have_webs
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
-                ? "{ \"availableTransports\": [ { \"transport\": \"ServerSentEvents\", \"transferFormats\": [ \"Text\" ] } ] }"
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
+                ? R"({ "availableTransports": [ { "transport": "ServerSentEvents", "transferFormats": [ "Text" ] } ] })"
                 : "";
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -513,29 +537,31 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_does_not_have_tran
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
                 ? "{ \"availableTransports\": [ ] }"
                 : "";
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
-    auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+    const auto connection =
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -553,29 +579,31 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_is_invalid)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
                 ? "{ \"availableTransports\": [ "
                 : "";
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -590,24 +618,19 @@ TEST(connection_impl_start, negotiate_follows_redirect)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                if (url.find("redirected") != std::string::npos)
-                {
-                    response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                        "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-                }
-                else
-                {
-                    response_body = "{ \"url\": \"http://redirected\" }";
-                }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            if (url.find("redirected") != std::string::npos) {
+                response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
+            } else {
+                response_body = "{ \"url\": \"http://redirected\" }";
             }
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
@@ -619,20 +642,23 @@ TEST(connection_impl_start, negotiate_follows_redirect)
         });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -645,25 +671,21 @@ TEST(connection_impl_start, negotiate_redirect_uses_accessToken)
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
     std::string accessToken;
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&accessToken](const std::string& url, http_request request, cancellation_token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&accessToken](const std::string& url, http_request request, cancellation_token) {
             std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                if (url.find("redirected") != std::string::npos)
-                {
+            if (url.find("/negotiate") != std::string::npos) {
+                if (url.find("redirected") != std::string::npos) {
                     response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
                         "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-                }
-                else
-                {
-                    response_body = "{ \"url\": \"http://redirected\", \"accessToken\": \"secret\" }";
+                } else {
+                    response_body = R"({ "url": "http://redirected", "accessToken": "secret" })";
                 }
             }
 
             accessToken = request.headers["Authorization"];
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
@@ -675,20 +697,23 @@ TEST(connection_impl_start, negotiate_redirect_uses_accessToken)
         });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -701,31 +726,32 @@ TEST(connection_impl_start, negotiate_fails_after_too_many_redirects)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                // infinite redirect
-                response_body = "{ \"url\": \"http://redirected\" }";
-            }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            // infinite redirect
+            response_body = "{ \"url\": \"http://redirected\" }";
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -733,7 +759,7 @@ TEST(connection_impl_start, negotiate_fails_after_too_many_redirects)
         mre.get();
         ASSERT_TRUE(false);
     }
-    catch (signalr_exception e)
+    catch (signalr_exception& e)
     {
         ASSERT_STREQ("Negotiate redirection limit exceeded.", e.what());
     }
@@ -743,37 +769,38 @@ TEST(connection_impl_start, negotiate_fails_if_ProtocolVersion_in_response)
 {
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                response_body = "{\"ProtocolVersion\" : \"\" }";
-            }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            response_body = "{\"ProtocolVersion\" : \"\" }";
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config&) { return websocket_client; });
+            },
+            [websocket_client](const signalr_client_config&) { return websocket_client; }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
     {
         mre.get();
     }
-    catch (signalr_exception e)
+    catch (signalr_exception& e)
     {
         ASSERT_STREQ("Detected a connection attempt to an ASP.NET SignalR Server. This client only supports connecting to an ASP.NET Core SignalR Server. See https://aka.ms/signalr-core-differences for details.", e.what());
     }
@@ -784,43 +811,42 @@ TEST(connection_impl_start, negotiate_redirect_does_not_overwrite_url)
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
     int redirectCount = 0;
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&redirectCount](const std::string& url, http_request, cancellation_token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&redirectCount](const std::string& url, http_request, cancellation_token) {
             std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                if (url.find("redirected") != std::string::npos)
-                {
+            if (url.find("/negotiate") != std::string::npos) {
+                if (url.find("redirected") != std::string::npos) {
                     response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
                         "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-                }
-                else
-                {
-                    response_body = "{ \"url\": \"http://redirected\" }";
+                } else {
+                    response_body = R"({ "url": "http://redirected" })";
                     redirectCount++;
                 }
             }
 
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
     mre.get();
     ASSERT_EQ(1, redirectCount);
@@ -852,39 +878,37 @@ TEST(connection_impl_start, negotiate_redirect_uses_own_query_string)
             callback(std::make_exception_ptr(std::runtime_error("connecting failed")));
         });
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                if (url.find("redirected") != std::string::npos)
-                {
-                    response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                        "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-                }
-                else
-                {
-                    response_body = "{ \"url\": \"http://redirected?customQuery=1\" }";
-                }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            if (url.find("redirected") != std::string::npos) {
+                response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
+            } else {
+                response_body = "{ \"url\": \"http://redirected?customQuery=1\" }";
             }
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
-    auto connection = connection_impl::create(create_uri("a=b&c=d"), trace_level::error, writer,
+    auto connection = connection_impl::create(
+        create_uri("a=b&c=d"), trace_level::error, writer, nullptr,
         [http_client](const signalr_client_config& config) {
             http_client->set_scheduler(config.get_scheduler());
             return http_client;
-        }, [websocket_client](const signalr_client_config& config)
+        },
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -913,33 +937,34 @@ TEST(connection_impl_start, negotiate_with_negotiateVersion_uses_connectionToken
             callback(std::make_exception_ptr(std::runtime_error("connecting failed")));
         });
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                    "\"connectionToken\":\"1122334455\", \"negotiateVersion\": 1, "
-                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-            }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                "\"connectionToken\":\"1122334455\", \"negotiateVersion\": 1, "
+                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
-    auto connection = connection_impl::create(create_uri(), trace_level::error, writer,
+    auto connection = connection_impl::create(
+        create_uri(), trace_level::error, writer, nullptr,
         [http_client](const signalr_client_config& config) {
             http_client->set_scheduler(config.get_scheduler());
             return http_client;
-        }, [websocket_client](const signalr_client_config& config)
+        },
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -966,33 +991,34 @@ TEST(connection_impl_start, correct_connection_id_returned_with_negotiateVersion
             callback(nullptr);
         });
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            std::string response_body = "";
-            if (url.find("/negotiate") != std::string::npos)
-            {
-                response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                    "\"connectionToken\":\"1122334455\", \"negotiateVersion\": 1, "
-                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
-            }
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        std::string response_body = "";
+        if (url.find("/negotiate") != std::string::npos) {
+            response_body = "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                "\"connectionToken\":\"1122334455\", \"negotiateVersion\": 1, "
+                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }";
+        }
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
-    auto connection = connection_impl::create(create_uri(), trace_level::error, writer,
+    auto connection = connection_impl::create(
+        create_uri(), trace_level::error, writer, nullptr,
         [http_client](const signalr_client_config& config) {
             http_client->set_scheduler(config.get_scheduler());
             return http_client;
-        }, [websocket_client](const signalr_client_config& config)
+        },
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1006,36 +1032,39 @@ TEST(connection_impl_start, negotiate_can_be_skipped)
 
     bool negotiate_called = false;
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&negotiate_called](const std::string& url, http_request request, cancellation_token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&negotiate_called](const std::string& url, http_request request, cancellation_token) {
             negotiate_called = true;
 
             auto response_body =
                 url.find_first_of("/negotiate") != 0
-                ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
-                : "";
+                    ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
+                    : "";
 
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
 
     auto websocket_client = std::make_shared<test_websocket_client>();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::info, writer,
+        connection_impl::create(
+            create_uri(), trace_level::info, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            }, true);
+            }, true
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1061,7 +1090,7 @@ TEST(connection_impl_process_response, process_response_logs_messages)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1095,14 +1124,14 @@ TEST(connection_impl_send, message_sent)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->send(message, transfer_format::text, [&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1118,7 +1147,7 @@ TEST(connection_impl_send, send_throws_if_connection_not_connected)
     auto mre = manual_reset_event<void>();
     connection->send("whatever", transfer_format::text, [&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -1146,14 +1175,14 @@ TEST(connection_impl_send, exceptions_from_send_logged_and_propagated)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->send("Test message", transfer_format::text, [&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -1198,7 +1227,7 @@ TEST(connection_impl_set_message_received, callback_invoked_when_message_receive
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1235,7 +1264,7 @@ TEST(connection_impl_set_message_received, exception_from_callback_caught_and_lo
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1275,7 +1304,7 @@ TEST(connection_impl_set_message_received, non_std_exception_from_callback_caugh
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1299,7 +1328,7 @@ void can_be_set_only_in_disconnected_state(std::function<void(connection_impl*)>
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1336,7 +1365,7 @@ TEST(connection_impl_stop, stopping_disconnected_connection_is_no_op)
     auto mre = manual_reset_event<void>();
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1370,14 +1399,14 @@ TEST(connection_impl_stop, stopping_disconnecting_connection_returns_canceled_ta
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     try
@@ -1385,7 +1414,7 @@ TEST(connection_impl_stop, stopping_disconnecting_connection_returns_canceled_ta
         auto mre_stop = manual_reset_event<void>();
         connection->stop([&mre_stop](std::exception_ptr exception)
             {
-                mre_stop.set(exception);
+                mre_stop.set(std::move(exception));
             }, nullptr);
 
         mre_stop.get();
@@ -1418,14 +1447,14 @@ TEST(connection_impl_stop, can_start_and_stop_connection)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1449,21 +1478,21 @@ TEST(connection_impl_stop, can_start_and_stop_connection_multiple_times)
         auto mre = manual_reset_event<void>();
         connection->start([&mre](std::exception_ptr exception)
             {
-                mre.set(exception);
+                mre.set(std::move(exception));
             });
 
         mre.get();
 
         connection->stop([&mre](std::exception_ptr exception)
             {
-                mre.set(exception);
+                mre.set(std::move(exception));
             }, nullptr);
 
         mre.get();
 
         connection->start([&mre](std::exception_ptr exception)
             {
-                mre.set(exception);
+                mre.set(std::move(exception));
             });
 
         mre.get();
@@ -1510,7 +1539,7 @@ TEST(connection_impl_stop, dtor_stops_the_connection)
         auto mre = manual_reset_event<void>();
         connection->start([&mre](std::exception_ptr exception)
             {
-                mre.set(exception);
+                mre.set(std::move(exception));
             });
 
         mre.get();
@@ -1538,16 +1567,15 @@ TEST(connection_impl_stop, stop_cancels_ongoing_start_request)
 {
     auto disconnect_completed_event = std::make_shared<cancellation_token_source>();
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
                 ? "{ \"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
                 "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
                 : "";
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto wait_for_start_mre = manual_reset_event<void>();
 
@@ -1560,17 +1588,20 @@ TEST(connection_impl_stop, stop_cancels_ongoing_start_request)
         });
 
     auto writer = std::shared_ptr<log_writer>{ std::make_shared<memory_log_writer>() };
-    auto connection = connection_impl::create(create_uri(), trace_level::verbose, writer,
+    auto connection = connection_impl::create(
+        create_uri(), trace_level::verbose, writer, nullptr,
         [http_client](const signalr_client_config& config) {
             http_client->set_scheduler(config.get_scheduler());
             return http_client;
-        }, [websocket_client](const signalr_client_config& config)
+        },
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
-    connection->set_disconnected([](std::exception_ptr ex)
+    connection->set_disconnected([](std::exception_ptr)
         {
             ASSERT_TRUE(false);
         });
@@ -1578,7 +1609,7 @@ TEST(connection_impl_stop, stop_cancels_ongoing_start_request)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     wait_for_start_mre.get();
@@ -1617,43 +1648,46 @@ TEST(connection_impl_stop, ongoing_start_request_canceled_if_connection_stopped_
 {
     auto stop_mre = manual_reset_event<void>();
     auto done_mre = manual_reset_event<void>();
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&stop_mre, &done_mre](const std::string& url, http_request, cancellation_token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&stop_mre, &done_mre](const std::string& url, http_request, cancellation_token) {
             stop_mre.get();
 
             auto response_body =
                 url.find("/negotiate") != std::string::npos
-                ? "{ \"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
-                : "";
+                    ? "{ \"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
+                    : "";
 
             done_mre.set();
 
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
 
     auto websocket_client = create_test_websocket_client();
 
     auto writer = std::shared_ptr<log_writer>{ std::make_shared<memory_log_writer>() };
-    auto connection = connection_impl::create(create_uri(), trace_level::verbose, writer,
+    auto connection = connection_impl::create(
+        create_uri(), trace_level::verbose, writer, nullptr,
         [http_client](const signalr_client_config& config) {
             http_client->set_scheduler(config.get_scheduler());
             return http_client;
-        }, [websocket_client](const signalr_client_config& config)
+        },
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        });
+        }
+    );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     connection->stop([&stop_mre](std::exception_ptr exception)
         {
-            stop_mre.set(exception);
+            stop_mre.set(std::move(exception));
         }, nullptr);
 
     try
@@ -1697,14 +1731,14 @@ TEST(connection_impl_stop, stop_invokes_disconnected_callback)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1724,14 +1758,14 @@ TEST(connection_impl_stop, std_exception_from_disconnected_callback_caught_and_l
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1753,14 +1787,14 @@ TEST(connection_impl_stop, exception_from_disconnected_callback_caught_and_logge
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1776,12 +1810,12 @@ TEST(connection_impl_stop, transport_error_invokes_disconnected_callback)
     auto connection = create_connection(websocket_client);
 
     auto disconnect_mre = manual_reset_event<void>();
-    connection->set_disconnected([&disconnect_mre](std::exception_ptr ex) { disconnect_mre.set(ex); });
+    connection->set_disconnected([&disconnect_mre](std::exception_ptr ex) { disconnect_mre.set(std::move(ex)); });
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
@@ -1806,15 +1840,14 @@ TEST(connection_impl_config, custom_headers_set_in_requests)
 {
     auto writer = std::shared_ptr<log_writer>{ std::make_shared<memory_log_writer>() };
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request, cancellation_token)
-        {
-            auto response_body =
-                url.find("/negotiate") != std::string::npos
+    auto http_client = std::make_shared<test_http_client>([](const std::string& url, http_request, cancellation_token) {
+        auto response_body =
+            url.find("/negotiate") != std::string::npos
                 ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
                 "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
                 : "";
 
-            /*auto request = new web_request_stub((unsigned short)200, "OK", response_body);
+        /*auto request = new web_request_stub((unsigned short)200, "OK", response_body);
             request->on_get_response = [](web_request_stub& request)
             {
                 auto http_headers = request.m_signalr_client_config.get_http_headers();
@@ -1822,21 +1855,23 @@ TEST(connection_impl_config, custom_headers_set_in_requests)
                 ASSERT_EQ(_XPLATSTR("42"), http_headers[_XPLATSTR("Answer")]);
             };*/
 
-            return http_response{ 200, response_body };
-        }));
+        return http_response{200, response_body};
+    });
 
     auto websocket_client = create_test_websocket_client();
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::verbose,
-            writer, [http_client](const signalr_client_config& config) {
+        connection_impl::create(create_uri(), trace_level::verbose, writer, nullptr,
+            [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     signalr::signalr_client_config signalr_client_config{};
     auto http_headers = signalr_client_config.get_http_headers();
@@ -1847,14 +1882,14 @@ TEST(connection_impl_config, custom_headers_set_in_requests)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1881,7 +1916,7 @@ TEST(connection_impl_change_state, change_state_logs)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
     mre.get();
 
@@ -1909,7 +1944,7 @@ TEST(connection_id, connection_id_is_set_if_start_fails_but_negotiate_request_su
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     try
@@ -1937,14 +1972,14 @@ TEST(connection_id, can_get_connection_id_when_connection_in_connected_state)
     connection->start([&mre, &connection_id, connection](std::exception_ptr exception)
         {
             connection_id = connection->get_connection_id();
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1962,14 +1997,14 @@ TEST(connection_id, can_get_connection_id_after_connection_has_stopped)
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -1985,43 +2020,46 @@ TEST(connection_id, connection_id_reset_when_starting_connection)
 
     auto websocket_client = create_test_websocket_client();
 
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&fail_http_requests](const std::string& url, http_request, cancellation_token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&fail_http_requests](const std::string& url, http_request, cancellation_token) {
             if (!fail_http_requests) {
                 auto response_body =
                     url.find("/negotiate") != std::string::npos
-                    ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
-                    : "";
+                        ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                        "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
+                        : "";
 
-                return http_response{ 200, response_body };
+                return http_response{200, response_body};
             }
 
-            return http_response{ 500, "" };
-        }));
+            return http_response{500, ""};
+        });
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::none, std::make_shared<memory_log_writer>(),
+        connection_impl::create(
+            create_uri(), trace_level::none, std::make_shared<memory_log_writer>(), nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         }, nullptr);
 
     mre.get();
@@ -2046,38 +2084,40 @@ TEST(connection_impl_stop, triggers_http_send_token)
 
     auto send_started = manual_reset_event<void>();
     auto websocket_client = create_test_websocket_client();
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&send_started](const std::string& url, http_request, cancellation_token token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&send_started](const std::string& url, http_request, cancellation_token token) {
             send_started.set();
             auto mre = manual_reset_event<void>();
-            token.register_callback([&mre]()
-                {
-                    mre.set();
-                });
+            token.register_callback([&mre]() {
+                mre.set();
+            });
             mre.get();
             auto response_body =
                 url.find("/negotiate") != std::string::npos
-                ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
-                : "";
+                    ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
+                    : "";
 
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
     auto connection =
-        connection_impl::create(create_uri(), trace_level::verbose, writer,
+        connection_impl::create(
+            create_uri(), trace_level::verbose, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
         {
-            start_mre.set(exception);
+            start_mre.set(std::move(exception));
         });
 
     send_started.get();
@@ -2085,7 +2125,7 @@ TEST(connection_impl_stop, triggers_http_send_token)
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
         {
-            stop_mre.set(exception);
+            stop_mre.set(std::move(exception));
         }, nullptr);
 
     try
@@ -2108,39 +2148,41 @@ TEST(connection_impl_stop, http_client_throws_from_registered_token)
 
     auto send_started = manual_reset_event<void>();
     auto websocket_client = create_test_websocket_client();
-    auto http_client = std::shared_ptr<test_http_client>(new test_http_client([&send_started](const std::string& url, http_request, cancellation_token token)
-        {
+    auto http_client = std::make_shared<test_http_client>(
+        [&send_started](const std::string& url, http_request, cancellation_token token) {
             auto mre = manual_reset_event<void>();
-            token.register_callback([&mre]()
-                {
-                    mre.set();
-                    throw custom_exception("test: from http client");
-                });
+            token.register_callback([&mre]() {
+                mre.set();
+                throw custom_exception("test: from http client");
+            });
             send_started.set();
             mre.get();
             auto response_body =
                 url.find("/negotiate") != std::string::npos
-                ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
-                "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
-                : "";
+                    ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
+                    "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
+                    : "";
 
-            return http_response{ 200, response_body };
-        }));
+            return http_response{200, response_body};
+        });
     auto connection =
-        connection_impl::create(create_uri(), trace_level::verbose, writer,
+        connection_impl::create(
+            create_uri(), trace_level::verbose, writer, nullptr,
             [http_client](const signalr_client_config& config) {
                 http_client->set_scheduler(config.get_scheduler());
                 return http_client;
-            }, [websocket_client](const signalr_client_config& config)
+            },
+            [websocket_client](const signalr_client_config& config)
             {
                 websocket_client->set_config(config);
                 return websocket_client;
-            });
+            }
+        );
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
         {
-            start_mre.set(exception);
+            start_mre.set(std::move(exception));
         });
 
     send_started.get();
@@ -2148,7 +2190,7 @@ TEST(connection_impl_stop, http_client_throws_from_registered_token)
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
         {
-            stop_mre.set(exception);
+            stop_mre.set(std::move(exception));
         }, nullptr);
 
     try
@@ -2221,16 +2263,19 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client_w
     auto writer = std::shared_ptr<memory_log_writer>{ std::make_shared<memory_log_writer>() };
 
     auto connection =
-        connection_impl::create(create_uri(), trace_level::verbose, writer,
-            create_test_http_client(), [](const signalr_client_config&)
+        connection_impl::create(
+            create_uri(), trace_level::verbose, writer, nullptr,
+            create_test_http_client(),
+            [](const signalr_client_config&)
             {
                 return std::make_shared<stop_capturing_websocket_client>(true);
-            });
+            }
+        );
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
         {
-            start_mre.set(exception);
+            start_mre.set(std::move(exception));
         });
 
     start_mre.get();
@@ -2238,7 +2283,7 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client_w
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
         {
-            stop_mre.set(exception);
+            stop_mre.set(std::move(exception));
         }, nullptr);
 
     try
@@ -2256,17 +2301,19 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client)
 {
     auto writer = std::shared_ptr<memory_log_writer>{ std::make_shared<memory_log_writer>() };
 
-    auto connection =
-        connection_impl::create(create_uri(), trace_level::verbose, writer,
-            create_test_http_client(), [](const signalr_client_config&)
+    auto connection = connection_impl::create(
+            create_uri(), trace_level::verbose, writer, nullptr,
+            create_test_http_client(),
+            [](const signalr_client_config&)
             {
                 return std::make_shared<stop_capturing_websocket_client>();
-            });
+            }
+        );
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
         {
-            start_mre.set(exception);
+            start_mre.set(std::move(exception));
         });
 
     start_mre.get();
@@ -2274,7 +2321,7 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client)
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
         {
-            stop_mre.set(exception);
+            stop_mre.set(std::move(exception));
         }, nullptr);
 
     stop_mre.get();

@@ -12,14 +12,18 @@
 #include "test_websocket_client.h"
 #include "hub_connection_impl.h"
 #include <atomic>
+#include <utility>
 
 using namespace signalr;
 
-hub_connection create_hub_connection(std::shared_ptr<test_websocket_client> websocket_client = create_test_websocket_client(),
-    std::shared_ptr<log_writer> log_writer = std::make_shared<memory_log_writer>(), trace_level trace_level = trace_level::verbose)
+hub_connection create_hub_connection(
+    std::shared_ptr<test_websocket_client> websocket_client = create_test_websocket_client(),
+    std::shared_ptr<log_writer> log_writer = std::make_shared<memory_log_writer>(),
+    trace_level trace_level = trace_level::verbose
+)
 {
     return hub_connection_builder::create(create_uri())
-        .with_logging(log_writer, trace_level)
+        .with_logging(std::move(log_writer), trace_level)
         .with_http_client_factory(create_test_http_client())
         .with_websocket_factory([websocket_client](const signalr_client_config& config)
             {
@@ -33,7 +37,7 @@ template<typename TValue>
 std::string build_websocket_message_string(TValue value)
 {
     std::ostringstream stream;
-    stream << "{ \"type\": 3, \"invocationId\": \"0\", \"result\": [" << value << "] }\x1e";
+    stream << R"({ "type": 3, "invocationId": "0", "result": [)" << value << "] }\x1e";
 
     return stream.str();
 }
@@ -59,7 +63,7 @@ void invoke_common_numeric_handling_logic(TValue original_value, std::function<v
 
     hub_connection.start([&connect_mre](std::exception_ptr exception)
         {
-            connect_mre.set(exception);
+            connect_mre.set(std::move(exception));
         });
 
     ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
@@ -1854,16 +1858,21 @@ TEST(send, throws_if_protocol_fails)
     auto websocket_client = create_test_websocket_client();
 
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
-    auto hub_connection = hub_connection_impl::create("", std::move(std::unique_ptr<hub_protocol>(new throw_hub_protocol())), signalr::trace_level::info, writer, nullptr, [websocket_client](const signalr_client_config& config)
+    auto hub_connection = hub_connection_impl::create(
+        "", std::move(std::unique_ptr<hub_protocol>(new throw_hub_protocol())), signalr::trace_level::info,
+        writer, nullptr, nullptr,
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        }, true);
+        },
+        true
+    );
 
     auto mre = manual_reset_event<void>();
     hub_connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
@@ -1935,11 +1944,16 @@ TEST(receive, close_connection_on_null_hub_message)
     auto websocket_client = create_test_websocket_client();
 
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
-    auto hub_connection = hub_connection_impl::create("", std::move(std::unique_ptr<hub_protocol>(new empty_hub_protocol())), signalr::trace_level::info, writer, nullptr, [websocket_client](const signalr_client_config& config)
+    auto hub_connection = hub_connection_impl::create(
+        "", std::move(std::unique_ptr<hub_protocol>(new empty_hub_protocol())),
+        signalr::trace_level::info, writer, nullptr, nullptr,
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        }, true);
+        },
+        true
+    );
 
     auto close_mre = manual_reset_event<void>();
     hub_connection->set_disconnected([&close_mre](std::exception_ptr exception)
@@ -2146,23 +2160,27 @@ TEST(receive, unknown_message_type_closes_connection)
     auto websocket_client = create_test_websocket_client();
 
     std::shared_ptr<log_writer> writer(std::make_shared<memory_log_writer>());
-    auto hub_connection = hub_connection_impl::create("", std::move(std::unique_ptr<hub_protocol>(new unknown_message_type_hub_protocol())), signalr::trace_level::info, writer,
-        nullptr, [websocket_client](const signalr_client_config& config)
+    auto hub_connection = hub_connection_impl::create(
+        "", std::move(std::unique_ptr<hub_protocol>(new unknown_message_type_hub_protocol())),
+        signalr::trace_level::info, writer, nullptr, nullptr,
+        [websocket_client](const signalr_client_config& config)
         {
             websocket_client->set_config(config);
             return websocket_client;
-        }, true);
+        },
+        true
+    );
 
     auto disconnect_mre = manual_reset_event<void>();
     hub_connection->set_disconnected([&disconnect_mre](std::exception_ptr ex)
         {
-            disconnect_mre.set(ex);
+            disconnect_mre.set(std::move(ex));
         });
 
     auto mre = manual_reset_event<void>();
     hub_connection->start([&mre](std::exception_ptr exception)
         {
-            mre.set(exception);
+            mre.set(std::move(exception));
         });
 
     ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
