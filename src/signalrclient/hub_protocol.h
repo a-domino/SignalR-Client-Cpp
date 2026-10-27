@@ -8,6 +8,7 @@
 #include "signalrclient/transfer_format.h"
 #include "message_type.h"
 #include <memory>
+#include <utility>
 
 namespace signalr
 {
@@ -22,9 +23,12 @@ namespace signalr
 
     struct hub_invocation_message : hub_message
     {
-        hub_invocation_message(const std::string& invocation_id, signalr::message_type message_type)
+        hub_invocation_message(const std::string& invocation_id, const signalr::message_type message_type)
             : hub_message(message_type), invocation_id(invocation_id)
         { }
+
+        hub_invocation_message(std::string&& invocation_id, const signalr::message_type message_type)
+            : hub_message(message_type), invocation_id(std::move(invocation_id)) {}
 
         std::string invocation_id;
     };
@@ -38,12 +42,22 @@ namespace signalr
 
         invocation_message(std::string&& invocation_id, std::string&& target,
             std::vector<signalr::value>&& args, std::vector<std::string>&& stream_ids = std::vector<std::string>())
-            : hub_invocation_message(invocation_id, signalr::message_type::invocation), target(target), arguments(args), stream_ids(stream_ids)
+            : hub_invocation_message(std::move(invocation_id), signalr::message_type::invocation), target(target), arguments(args), stream_ids(stream_ids)
         { }
 
         std::string target;
         std::vector<signalr::value> arguments;
         std::vector<std::string> stream_ids;
+    };
+
+    struct stream_item_message : hub_invocation_message {
+        stream_item_message(const std::string& invocation_id, const signalr::value& item)
+            : hub_invocation_message(invocation_id, message_type::stream_item), item(item) {}
+
+        stream_item_message(std::string&& invocation_id, signalr::value&& item)
+            : hub_invocation_message(std::move(invocation_id), message_type::stream_item), item(std::move(item)) {}
+
+        signalr::value item;
     };
 
     struct completion_message : hub_invocation_message
@@ -53,7 +67,7 @@ namespace signalr
         { }
 
         completion_message(std::string&& invocation_id, std::string&& error, signalr::value&& result, bool has_result)
-            : hub_invocation_message(invocation_id, signalr::message_type::completion), error(error), result(result), has_result(has_result)
+            : hub_invocation_message(std::move(invocation_id), signalr::message_type::completion), error(error), result(result), has_result(has_result)
         { }
 
         std::string error;
@@ -61,9 +75,65 @@ namespace signalr
         bool has_result;
     };
 
+    struct stream_invocation_message : hub_invocation_message {
+        stream_invocation_message(
+            const std::string& invocation_id, const std::string& target, const std::vector<signalr::value>& arguments,
+            const std::vector<std::string>& stream_ids = std::vector<std::string>()
+        ) : hub_invocation_message(invocation_id, message_type::stream_invocation)
+          , target(target)
+          , arguments(arguments)
+          , stream_ids(stream_ids){}
+
+        stream_invocation_message(
+            std::string&& invocation_id, std::string&& target, std::vector<signalr::value>&& arguments,
+            std::vector<std::string>&& stream_ids = std::vector<std::string>()
+        ) : hub_invocation_message(std::move(invocation_id), message_type::stream_invocation)
+          , target(std::move(target))
+          , arguments(std::move(arguments))
+          , stream_ids(std::move(stream_ids)){}
+
+        std::string target;
+        std::vector<signalr::value> arguments;
+        std::vector<std::string> stream_ids;
+    };
+
+    struct cancel_invocation_message : hub_invocation_message {
+        cancel_invocation_message(
+            const std::string& invocation_id
+        ) : hub_invocation_message(invocation_id, message_type::cancel_invocation) {}
+
+        cancel_invocation_message(
+            std::string&& invocation_id
+        ) : hub_invocation_message(std::move(invocation_id), message_type::cancel_invocation) {}
+    };
+
     struct ping_message : hub_message
     {
         ping_message() : hub_message(signalr::message_type::ping) {}
+    };
+
+    struct close_message : hub_message {
+        close_message(
+            std::string&& error, const bool allow_reconnect = false
+        ) : hub_message(signalr::message_type::close), error(std::move(error)), allow_reconnect(allow_reconnect) {}
+
+        std::string error;
+        bool allow_reconnect;
+    };
+
+    struct ack_message : hub_message {
+        ack_message(const int64_t sequence_id) : hub_message(signalr::message_type::ack), sequence_id(sequence_id) {}
+
+        int64_t sequence_id;
+    };
+
+    // Only sent on reconnects.
+    struct sequence_message : hub_message {
+        sequence_message(
+            const int64_t sequence_id
+        ) : hub_message(signalr::message_type::sequence), sequence_id(sequence_id) {}
+
+        int64_t sequence_id;
     };
 
     class hub_protocol

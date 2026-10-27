@@ -6,6 +6,8 @@
 
 #define STRINGIFY_2(s) #s
 #define STRINGIFY(s) STRINGIFY_2(s)
+#include <exception>
+#include <string>
 
 #ifdef _WIN32 // used in the default log writer and to build the dll
 
@@ -18,3 +20,16 @@
 
 #include <functional>
 #include <unordered_map>
+
+inline std::string formatException(const std::exception_ptr& ex) noexcept {
+    if (!ex) {
+        return "None";
+    }
+    try {
+        std::rethrow_exception(ex);
+    } catch (const std::exception& e) {
+        return e.what();
+    } catch (...) {
+        return "Unknown non-standard exception";
+    }
+}

@@ -35,7 +35,7 @@ namespace signalr
         // Variadic multi-segment overload:
         // Concatenates 2 or more string-like arguments into a stack buffer without heap allocation.
         template <typename T1, typename T2, typename... TRest>
-        void log(const trace_level level, const T1& first, const T2& second, const TRest&... rest) const
+        void logv(const trace_level level, const T1& first, const T2& second, const TRest&... rest) const
         {
             if (!is_enabled(level))
             {
@@ -65,7 +65,7 @@ namespace signalr
                         dest += pieces[i].size;
                     }
                 }
-                log(level, static_cast<const char*>(buffer), total_length);
+                log(level, buffer, total_length);
             }
             else
             {
@@ -86,7 +86,7 @@ namespace signalr
         // Optional printf-style variadic overload (implemented in logger.cpp)
         void logf(trace_level level, const char* format, ...) const;
 
-        bool is_enabled(const trace_level level) const
+        [[nodiscard]] bool is_enabled(const trace_level level) const
         {
             return level >= m_trace_level;
         }

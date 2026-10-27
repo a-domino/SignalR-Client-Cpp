@@ -17,13 +17,13 @@ namespace signalr
     hub_connection::hub_connection(
         const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol, const trace_level trace_level,
         const std::shared_ptr<log_writer>& log_writer, const log_entry_handler& log_entry_handler,
-        std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory,
-        std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory,
+        const std::function<std::shared_ptr<http_client>(const signalr_client_config&)>& http_client_factory,
+        const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_factory,
         const bool skip_negotiation
     ) : m_pImpl(
         hub_connection_impl::create(
-            url, std::move(hub_protocol), trace_level, log_writer, log_entry_handler, std::move(http_client_factory),
-            std::move(websocket_factory), skip_negotiation
+            url, std::move(hub_protocol), trace_level, log_writer, log_entry_handler, http_client_factory,
+            websocket_factory, skip_negotiation
           )
         )
     {}
@@ -84,7 +84,10 @@ namespace signalr
         return m_pImpl->on(event_name, handler);
     }
 
-    void hub_connection::invoke(const std::string& method_name, const std::vector<signalr::value>& arguments, std::function<void(const signalr::value&, std::exception_ptr)> callback) noexcept
+    void hub_connection::invoke(
+        const std::string& method_name, const std::vector<signalr::value>& arguments,
+        std::function<void(signalr::value&&, std::exception_ptr)> callback
+    ) const noexcept
     {
         if (!m_pImpl)
         {
@@ -92,7 +95,7 @@ namespace signalr
             return;
         }
 
-        return m_pImpl->invoke(method_name, arguments, callback);
+        return m_pImpl->invoke(method_name, arguments, std::move(callback));
     }
 
     void hub_connection::send(const std::string& method_name, const std::vector<signalr::value>& arguments, std::function<void(std::exception_ptr)> callback) noexcept

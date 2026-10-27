@@ -11,22 +11,30 @@
 #pragma warning (push)
 #pragma warning (disable : 5204 4355)
 #include <future>
+#include <utility>
 #pragma warning (pop)
 
 namespace signalr
 {
-    std::shared_ptr<signalr::transport> websocket_transport::create(const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
-        const signalr_client_config& signalr_client_config, const logger& logger)
+    std::shared_ptr<signalr::transport> websocket_transport::create(
+        const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
+        const signalr_client_config& signalr_client_config, const logger& logger
+    )
     {
         return std::shared_ptr<transport>(
-            new websocket_transport(websocket_client_factory, signalr_client_config, logger));
+            new websocket_transport(websocket_client_factory, signalr_client_config, logger)
+        );
     }
 
-    websocket_transport::websocket_transport(const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
-        const signalr_client_config& signalr_client_config, const logger& logger)
-        : transport(logger), m_websocket_client_factory(websocket_client_factory), m_process_response_callback([](std::string, std::exception_ptr) {}),
-        m_close_callback([](std::exception_ptr) {}), m_signalr_client_config(signalr_client_config),
-        m_disconnected(true), m_receive_loop_task(std::make_shared<cancellation_token_source>())
+    websocket_transport::websocket_transport(
+        const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
+        signalr_client_config  signalr_client_config, const logger& logger
+    ) : transport(logger)
+      , m_websocket_client_factory(websocket_client_factory)
+      , m_process_response_callback([](std::string, std::exception_ptr) {})
+      , m_close_callback([](const std::exception_ptr&) {})
+      , m_signalr_client_config(std::move(signalr_client_config))
+      , m_disconnected(true), m_receive_loop_task(std::make_shared<cancellation_token_source>())
     {
         // we use this cts to check if the receive loop is running so it should be
         // initially canceled to indicate that the receive loop is not running
@@ -38,7 +46,7 @@ namespace signalr
         try
         {
             std::shared_ptr<std::promise<void>> promise = std::make_shared<std::promise<void>>();
-            stop([promise](std::exception_ptr) { promise->set_value(); });
+            websocket_transport::stop([promise](const std::exception_ptr&) { promise->set_value(); });
             promise->get_future().get();
         }
         catch (...) // must not throw from the destructor
@@ -72,9 +80,11 @@ namespace signalr
         // to `then` (note this is after the lambda body) and if the token is cancelled the continuation will not
         // run at all. The second - explicit - case happens if the token gets cancelled after the continuation has
         // been started in which case we just stop the loop by not scheduling another receive task.
-        websocket_client->receive([weak_transport, logger, receive_loop_task, weak_websocket_client](std::string message, std::exception_ptr exception)
+        websocket_client->receive(
+            [weak_transport, logger, receive_loop_task, weak_websocket_client]
+            (std::string&& message, std::exception_ptr exception)
             {
-                auto transport = weak_transport.lock();
+                const auto transport = weak_transport.lock();
 
                 // transport can be null if a websocket transport specific test doesn't call and wait for stop and relies on the destructor, if that happens update the test to call and wait for stop.
                 // stop waits for the receive loop to complete so the transport should never be null
@@ -141,11 +151,11 @@ namespace signalr
                     }
 
                     // because transport.stop won't be called we need to stop the underlying client and invoke the transports close callback
-                    client->stop([&promise](std::exception_ptr exception)
+                    client->stop([&promise](std::exception_ptr ex_ptr)
                     {
-                        if (exception != nullptr)
+                        if (ex_ptr != nullptr)
                         {
-                            promise.set_exception(exception);
+                            promise.set_exception(std::move(ex_ptr));
                         }
                         else
                         {
@@ -166,7 +176,7 @@ namespace signalr
                     return;
                 }
 
-                transport->m_process_response_callback(message, nullptr);
+                transport->m_process_response_callback(std::move(message), nullptr);
 
                 {
                     std::lock_guard<std::mutex> lock(transport->m_start_stop_lock);
@@ -182,7 +192,8 @@ namespace signalr
                 {
                     receive_loop_task->cancel();
                 }
-            });
+            }
+        );
     }
 
     std::shared_ptr<websocket_client> websocket_transport::safe_get_websocket_client()
@@ -225,7 +236,7 @@ namespace signalr
 
             auto weak_transport = std::weak_ptr<websocket_transport>(shared_from_this());
 
-            websocket_client->start(url, [weak_transport, callback](std::exception_ptr exception)
+            websocket_client->start(url, [weak_transport, callback](std::exception_ptr ex_ptr)
                 {
                     auto transport = weak_transport.lock();
                     if (!transport)
@@ -236,9 +247,9 @@ namespace signalr
 
                     try
                     {
-                        if (exception != nullptr)
+                        if (ex_ptr != nullptr)
                         {
-                            std::rethrow_exception(exception);
+                            std::rethrow_exception(std::move(ex_ptr));
                         }
 
                         if (transport->m_disconnected)
@@ -263,7 +274,7 @@ namespace signalr
         }
     }
 
-    void websocket_transport::stop(std::function<void(std::exception_ptr)> callback) noexcept
+    void websocket_transport::stop(const std::function<void(std::exception_ptr)>& callback) noexcept
     {
         std::shared_ptr<websocket_client> websocket_client = nullptr;
 
@@ -287,15 +298,15 @@ namespace signalr
 
         m_logger.log(trace_level::debug, "stopping websocket transport");
 
-        websocket_client->stop([logger, callback, close_callback, receive_loop_task](std::exception_ptr exception)
+        websocket_client->stop([logger, callback, close_callback, receive_loop_task](const std::exception_ptr& ex_ptr)
             {
-                receive_loop_task->register_callback([logger, callback, close_callback, exception]()
+                receive_loop_task->register_callback([logger, callback, close_callback, ex_ptr]()
                     {
                         try
                         {
-                            if (exception != nullptr)
+                            if (ex_ptr != nullptr)
                             {
-                                std::rethrow_exception(exception);
+                                std::rethrow_exception(ex_ptr);
                             }
                             logger.log(trace_level::debug, "websocket transport stopped");
                         }
@@ -305,16 +316,18 @@ namespace signalr
                             {
                                 logger.log(
                                     trace_level::error,
-                                    std::string("websocket transport stopped with error: ")
-                                    .append(e.what()));
+                                    std::string("websocket transport stopped with error: ").append(e.what())
+                                );
                             }
                         }
 
-                        close_callback(exception);
+                        close_callback(ex_ptr);
 
-                        callback(exception);
-                    });
-            });
+                        callback(ex_ptr);
+                    }
+                );
+            }
+        );
     }
 
     void websocket_transport::on_close(std::function<void(std::exception_ptr)> callback)
@@ -327,18 +340,21 @@ namespace signalr
         m_process_response_callback = callback;
     }
 
-    void websocket_transport::send(const std::string& payload, transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept
+    void websocket_transport::send(
+        const std::string& payload, const transfer_format transfer_format,
+        const std::function<void(std::exception_ptr)>& callback
+    ) noexcept
     {
-        safe_get_websocket_client()->send(payload, transfer_format, [callback](std::exception_ptr exception)
+        safe_get_websocket_client()->send(payload, transfer_format, [callback](const std::exception_ptr& exception)
+        {
+            if (exception != nullptr)
             {
-                if (exception != nullptr)
-                {
-                    callback(exception);
-                }
-                else
-                {
-                    callback(nullptr);
-                }
-            });
+                callback(exception);
+            }
+            else
+            {
+                callback(nullptr);
+            }
+        });
     }
 }

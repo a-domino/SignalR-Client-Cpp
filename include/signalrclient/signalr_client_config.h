@@ -4,14 +4,6 @@
 
 #pragma once
 
-#ifdef USE_CPPRESTSDK
-#pragma warning (push)
-#pragma warning (disable : 5204 4355 4625 4626 4868)
-#include <cpprest/http_client.h>
-#include <cpprest/ws_client.h>
-#pragma warning (pop)
-#endif
-
 #include "_exports.h"
 #include <map>
 #include <string>
@@ -23,22 +15,22 @@ namespace signalr
     class signalr_client_config
     {
     public:
-#ifdef USE_CPPRESTSDK
-        SIGNALRCLIENT_API void __cdecl set_proxy(const web::web_proxy &proxy);
-        // Please note that setting credentials does not work in all cases.
-        // For example, Basic Authentication fails under Win32.
-        // As a workaround, you can set the required authorization headers directly
-        // using signalr_client_config::set_http_headers
-        SIGNALRCLIENT_API void __cdecl set_credentials(const web::credentials &credentials);
 
-        SIGNALRCLIENT_API web::http::client::http_client_config __cdecl get_http_client_config() const;
-        SIGNALRCLIENT_API void __cdecl set_http_client_config(const web::http::client::http_client_config& http_client_config);
+        // TODO: re-implement features that were included when the Cpp Rest SDK was being used:
+        //  - Set Proxy (although, a proxy getter/setter is already included in both configs...):
+        //     + Old signature: void __cdecl set_proxy(const web::web_proxy &proxy);
+        //  - Set Credentials (although, a set creds getter/setter is already included in both configs...):
+        //     + Old signature: void __cdecl set_credentials(const web::credentials &credentials);
+        //  - Set/Get HTTP Client Config:
+        //     + Old Set Signature: void __cdecl set_http_client_config(const web::http::client::http_client_config& http_client_config);
+        //     + Old Get Signature: web::http::client::http_client_config __cdecl get_http_client_config() const;
+        //  - Set/Get Websocket Client Config:
+        //     + Old Set Signature: void __cdecl set_websocket_client_config(const web::websockets::client::websocket_client_config& websocket_client_config);
+        //     + Old Get Signature: web::websockets::client::websocket_client_config __cdecl get_websocket_client_config() const noexcept;
 
-#if false
-        SIGNALRCLIENT_API web::websockets::client::websocket_client_config __cdecl get_websocket_client_config() const noexcept;
-        SIGNALRCLIENT_API void __cdecl set_websocket_client_config(const web::websockets::client::websocket_client_config& websocket_client_config);
-#endif
-#endif
+        // For the web::http::client::http_client_config, there isn't a direct translation into any 1 HTTP library, so
+        // a new config will likely need to be defined that supports most, if not all, of the functionality that the old
+        // config file provided.
 
         SIGNALRCLIENT_API signalr_client_config();
 
@@ -55,12 +47,6 @@ namespace signalr
         SIGNALRCLIENT_API std::chrono::milliseconds get_keepalive_interval() const noexcept;
 
     private:
-#ifdef USE_CPPRESTSDK
-        web::http::client::http_client_config m_http_client_config;
-#if false
-        web::websockets::client::websocket_client_config m_websocket_client_config;
-#endif
-#endif
         std::map<std::string, std::string> m_http_headers;
         std::shared_ptr<scheduler> m_scheduler;
         std::chrono::milliseconds m_handshake_timeout;

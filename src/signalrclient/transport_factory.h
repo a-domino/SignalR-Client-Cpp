@@ -20,8 +20,9 @@ namespace signalr
         transport_factory(std::function<std::shared_ptr<http_client>(const signalr_client_config&)>,
             std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory);
 
-        virtual std::shared_ptr<transport> create_transport(transport_type transport_type, const logger& logger,
-            const signalr_client_config& signalr_client_config);
+        virtual std::shared_ptr<transport> create_transport(
+            transport_type transport_type, const logger& logger, const signalr_client_config& signalr_client_config
+        );
 
         virtual ~transport_factory();
     private:

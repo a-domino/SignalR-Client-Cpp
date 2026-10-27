@@ -105,7 +105,7 @@ void test_websocket_client::stop(std::function<void(std::exception_ptr)> callbac
         });
 }
 
-void test_websocket_client::send(const std::string& payload, signalr::transfer_format, std::function<void(std::exception_ptr)> callback)
+void test_websocket_client::send(const std::string& payload, signalr::transfer_format, const std::function<void(std::exception_ptr)>& callback)
 {
     handshake_sent.cancel();
     auto local_copy = m_send_function;

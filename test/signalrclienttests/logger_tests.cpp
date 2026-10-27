@@ -211,10 +211,10 @@ TEST(logger_handler, catches_unknown_exception_without_terminating)
 }
 
 // ============================================================================
-// 4. Variadic Multi-Piece Concatenation Tests
+// Variadic Multi-Piece Concatenation Tests (logv)
 // ============================================================================
 
-TEST(logger_variadic, concatenates_mixed_types_without_formatting)
+TEST(logger_logv, concatenates_mixed_types_without_formatting)
 {
     std::string captured;
     auto handler = [&](trace_level, const char* entry, size_t count) {
@@ -225,12 +225,12 @@ TEST(logger_variadic, concatenates_mixed_types_without_formatting)
 
     const std::string str = "dynamic";
     const char* raw_ptr = "raw";
-    l.log(trace_level::info, "literal: ", str, " and ", raw_ptr, " tail");
+    l.logv(trace_level::info, "literal: ", str, " and ", raw_ptr, " tail");
 
     EXPECT_EQ("literal: dynamic and raw tail", captured);
 }
 
-TEST(logger_variadic, respects_trace_level_filter)
+TEST(logger_logv, respects_trace_level_filter)
 {
     int call_count = 0;
     auto handler = [&](trace_level, const char*, size_t) {
@@ -238,12 +238,12 @@ TEST(logger_variadic, respects_trace_level_filter)
     };
 
     logger l(nullptr, trace_level::error, handler);
-    l.log(trace_level::info, "part1", "part2");
+    l.logv(trace_level::info, "part1", "part2");
 
     EXPECT_EQ(0, call_count);
 }
 
-TEST(logger_variadic, handles_payloads_exceeding_stack_buffer)
+TEST(logger_logv, handles_payloads_exceeding_stack_buffer)
 {
     std::string captured;
     auto handler = [&](trace_level, const char* entry, size_t count) {
@@ -252,10 +252,9 @@ TEST(logger_variadic, handles_payloads_exceeding_stack_buffer)
 
     logger l(nullptr, trace_level::info, handler);
 
-    // Create 2 parts whose combined length is 1400 bytes (> 1024-byte stack capacity)
     const std::string part1(700, 'A');
     const std::string part2(700, 'B');
-    l.log(trace_level::info, part1, part2);
+    l.logv(trace_level::info, part1, part2);
 
     ASSERT_EQ(1400U, captured.size());
     EXPECT_EQ(part1 + part2, captured);

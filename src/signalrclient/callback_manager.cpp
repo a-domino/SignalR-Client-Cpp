@@ -20,14 +20,16 @@ namespace signalr
     }
 
     // note: callback must not throw except for the `on_progress` callback which will never be invoked from the dtor
-    std::string callback_manager::register_callback(const std::function<void(const char*, const signalr::value&)>& callback)
+    std::string callback_manager::register_complete_callback(
+        const std::function<void(const char* err_msg, value&&)>& callback
+    )
     {
-        auto callback_id = get_callback_id();
+        auto callback_id = std::move(get_callback_id());
 
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            m_callbacks.insert(std::make_pair(callback_id, callback));
+            m_complete_callbacks.insert(std::make_pair(callback_id, callback));
         }
 
         return callback_id;
@@ -35,15 +37,17 @@ namespace signalr
 
 
     // invokes a callback and stops tracking it if remove callback set to true
-    bool callback_manager::invoke_callback(const std::string& callback_id, const char* error, const signalr::value& arguments, bool remove_callback)
+    bool callback_manager::invoke_complete_callback(
+        const std::string& callback_id, const char* error, signalr::value&& arguments, bool remove_callback
+    )
     {
-        std::function<void(const char*, const signalr::value& arguments)> callback;
+        std::function<void(const char*, signalr::value&& arguments)> callback;
 
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            auto iter = m_callbacks.find(callback_id);
-            if (iter == m_callbacks.end())
+            auto iter = m_complete_callbacks.find(callback_id);
+            if (iter == m_complete_callbacks.end())
             {
                 return false;
             }
@@ -52,20 +56,20 @@ namespace signalr
 
             if (remove_callback)
             {
-                m_callbacks.erase(callback_id);
+                m_complete_callbacks.erase(callback_id);
             }
         }
 
-        callback(error, arguments);
+        callback(error, std::move(arguments));
         return true;
     }
 
-    bool callback_manager::remove_callback(const std::string& callback_id)
+    bool callback_manager::remove_complete_callback(const std::string& callback_id)
     {
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            return m_callbacks.erase(callback_id) != 0;
+            return m_complete_callbacks.erase(callback_id) != 0;
         }
     }
 
@@ -74,20 +78,17 @@ namespace signalr
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            for (auto& kvp : m_callbacks)
+            for (auto& kvp : m_complete_callbacks)
             {
                 kvp.second(error, signalr::value());
             }
 
-            m_callbacks.clear();
+            m_complete_callbacks.clear();
         }
     }
 
     std::string callback_manager::get_callback_id()
     {
-        const auto callback_id = m_id++;
-        std::stringstream ss;
-        ss << callback_id;
-        return ss.str();
+        return std::move(std::to_string(m_id++));
     }
 }

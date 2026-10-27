@@ -10,8 +10,8 @@ using namespace signalr;
 TEST(callback_manager_register_callback, register_returns_unique_callback_ids)
 {
     callback_manager callback_mgr{ "" };
-    auto callback_id1 = callback_mgr.register_callback([](const char*, const signalr::value&){});
-    auto callback_id2 = callback_mgr.register_callback([](const char*, const signalr::value&){});
+    auto callback_id1 = callback_mgr.register_complete_callback([](const char*, const signalr::value&){});
+    auto callback_id2 = callback_mgr.register_complete_callback([](const char*, const signalr::value&){});
 
     ASSERT_NE(callback_id1, callback_id2);
 }
@@ -22,18 +22,18 @@ TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_removes_callb
 
     int callback_argument;
 
-    auto callback_id = callback_mgr.register_callback(
+    auto callback_id = callback_mgr.register_complete_callback(
         [&callback_argument](const char* error, const signalr::value& argument)
         {
             ASSERT_EQ(nullptr, error);
             callback_argument = (int)argument.as_double();
         });
 
-    auto callback_found = callback_mgr.invoke_callback(callback_id, nullptr, signalr::value(42.0), true);
+    auto callback_found = callback_mgr.invoke_complete_callback(callback_id, nullptr, signalr::value(42.0), true);
 
     ASSERT_TRUE(callback_found);
     ASSERT_EQ(42, callback_argument);
-    ASSERT_FALSE(callback_mgr.remove_callback(callback_id));
+    ASSERT_FALSE(callback_mgr.remove_complete_callback(callback_id));
 }
 
 TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_does_not_remove_callback_if_remove_callback_false)
@@ -42,24 +42,24 @@ TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_does_not_remo
 
     int callback_argument;
 
-    auto callback_id = callback_mgr.register_callback(
+    auto callback_id = callback_mgr.register_complete_callback(
         [&callback_argument](const char* error, const signalr::value& argument)
         {
             ASSERT_EQ(nullptr, error);
             callback_argument = (int)argument.as_double();
         });
 
-    auto callback_found = callback_mgr.invoke_callback(callback_id, nullptr, signalr::value(42.0), false);
+    auto callback_found = callback_mgr.invoke_complete_callback(callback_id, nullptr, signalr::value(42.0), false);
 
     ASSERT_TRUE(callback_found);
     ASSERT_EQ(42, callback_argument);
-    ASSERT_TRUE(callback_mgr.remove_callback(callback_id));
+    ASSERT_TRUE(callback_mgr.remove_complete_callback(callback_id));
 }
 
 TEST(callback_manager_invoke_callback, invoke_callback_returns_false_for_invalid_callback_id)
 {
     callback_manager callback_mgr{ "" };
-    auto callback_found = callback_mgr.invoke_callback("42", nullptr, signalr::value(), true);
+    auto callback_found = callback_mgr.invoke_complete_callback("42", nullptr, signalr::value(), true);
 
     ASSERT_FALSE(callback_found);
 }
@@ -71,13 +71,14 @@ TEST(callback_manager_remove, remove_removes_callback_and_returns_true_for_valid
     {
         callback_manager callback_mgr{ "" };
 
-        auto callback_id = callback_mgr.register_callback(
+        auto callback_id = callback_mgr.register_complete_callback(
             [&callback_called](const char*, const signalr::value&)
-        {
-            callback_called = true;
-        });
+            {
+                callback_called = true;
+            }
+        );
 
-        ASSERT_TRUE(callback_mgr.remove_callback(callback_id));
+        ASSERT_TRUE(callback_mgr.remove_complete_callback(callback_id));
     }
 
     ASSERT_FALSE(callback_called);
@@ -86,7 +87,7 @@ TEST(callback_manager_remove, remove_removes_callback_and_returns_true_for_valid
 TEST(callback_manager_remove, remove_returns_false_for_invalid_callback_id)
 {
     callback_manager callback_mgr{ "" };
-    ASSERT_FALSE(callback_mgr.remove_callback("42"));
+    ASSERT_FALSE(callback_mgr.remove_complete_callback("42"));
 }
 
 TEST(callback_manager_clear, clear_invokes_all_callbacks)
@@ -96,7 +97,7 @@ TEST(callback_manager_clear, clear_invokes_all_callbacks)
 
     for (auto i = 0; i < 10; i++)
     {
-        callback_mgr.register_callback(
+        callback_mgr.register_complete_callback(
             [&invocation_count](const char* error, const signalr::value& argument)
             {
                 invocation_count++;
@@ -118,13 +119,14 @@ TEST(callback_manager_dtor, clear_invokes_all_callbacks)
         callback_manager callback_mgr{ "error" };
         for (auto i = 0; i < 10; i++)
         {
-            callback_mgr.register_callback(
+            callback_mgr.register_complete_callback(
                 [&invocation_count](const char* error, const signalr::value& argument)
-            {
-                invocation_count++;
-                ASSERT_STREQ("error", error);
-                ASSERT_TRUE(argument.is_null());
-            });
+                {
+                    invocation_count++;
+                    ASSERT_STREQ("error", error);
+                    ASSERT_TRUE(argument.is_null());
+                }
+            );
         }
     }
 

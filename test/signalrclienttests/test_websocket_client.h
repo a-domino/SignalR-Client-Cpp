@@ -25,7 +25,8 @@ public:
 
     void stop(std::function<void(std::exception_ptr)> callback);
 
-    void send(const std::string& payload, signalr::transfer_format transfer_format, std::function<void(std::exception_ptr)> callback);
+    void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
+              callback);
 
     void receive(std::function<void(const std::string&, std::exception_ptr)> callback);
 

@@ -15,5 +15,7 @@ namespace signalr
         cancel_invocation,
         ping,
         close,
+        ack,
+        sequence
     };
 }

@@ -91,7 +91,6 @@ namespace signalr
 
     hub_connection hub_connection_builder::build()
     {
-#ifndef USE_CPPRESTSDK
         if (m_http_client_factory == nullptr)
         {
             throw std::runtime_error("An http client must be provided using 'with_http_client_factory' on the builder.");
@@ -101,7 +100,6 @@ namespace signalr
         {
             throw std::runtime_error("A websocket factory must be provided using 'with_websocket_factory' on the builder.");
         }
-#endif
 
         std::unique_ptr<hub_protocol> hub_protocol;
 

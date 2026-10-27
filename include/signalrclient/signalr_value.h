@@ -238,4 +238,6 @@ namespace signalr
 
         void destruct_internals();
     };
+
+    std::ostream& operator<<(std::ostream& os, const signalr::value& value);
 }

@@ -49,7 +49,11 @@ namespace signalr
 
         SIGNALRCLIENT_API void __cdecl on(const std::string& event_name, const method_invoked_handler& handler);
 
-        SIGNALRCLIENT_API void invoke(const std::string& method_name, const std::vector<signalr::value>& arguments = std::vector<signalr::value>(), std::function<void(const signalr::value&, std::exception_ptr)> callback = [](const signalr::value&, std::exception_ptr) {}) noexcept;
+        SIGNALRCLIENT_API void invoke(
+            const std::string& method_name,
+            const std::vector<value>& arguments = std::vector<signalr::value>(),
+            std::function<void(value&&, std::exception_ptr)> callback = [](const signalr::value&, std::exception_ptr) {}
+        ) const noexcept;
 
         SIGNALRCLIENT_API void send(const std::string& method_name, const std::vector<signalr::value>& arguments = std::vector<signalr::value>(), std::function<void(std::exception_ptr)> callback = [](std::exception_ptr) {}) noexcept;
 
@@ -60,8 +64,8 @@ namespace signalr
             const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol,
             trace_level trace_level = trace_level::info, const std::shared_ptr<log_writer>& log_writer = nullptr,
             const log_entry_handler& log_entry_handler = nullptr,
-            std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory = nullptr,
-            std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> websocket_factory = nullptr,
+            const std::function<std::shared_ptr<http_client>(const signalr_client_config&)>& http_client_factory = nullptr,
+            const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_factory = nullptr,
             bool skip_negotiation = false
         );
 

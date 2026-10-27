@@ -7,7 +7,6 @@
 #include "trace_log_writer.h"
 #include "test_websocket_client.h"
 #include "websocket_transport.h"
-#include "default_websocket_client.h"
 #include "memory_log_writer.h"
 #include <future>
 #include <atomic>
@@ -52,9 +51,9 @@ TEST(websocket_transport_connect, connect_connects_and_starts_receive_loop)
     ASSERT_EQ("[info     ] [websocket transport] connecting to: ws://fakeuri.org/connect?param=42\n", entry);
 
     ws_transport->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(exception);
-        });
+    {
+        mre.set(exception);
+    });
     mre.get();
 }
 
@@ -156,9 +155,9 @@ TEST(websocket_transport_connect, cannot_call_connect_on_already_connected_trans
     }
 
     ws_transport->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(exception);
-        });
+    {
+        mre.set(exception);
+    });
     mre.get();
 }
 
@@ -191,9 +190,9 @@ TEST(websocket_transport_connect, can_connect_after_disconnecting)
     mre.get();
 
     ws_transport->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(exception);
-        });
+    {
+        mre.set(exception);
+    });
     mre.get();
 }
 
@@ -231,9 +230,9 @@ TEST(websocket_transport_send, send_creates_and_sends_websocket_messages)
     ASSERT_TRUE(send_called);
 
     ws_transport->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(exception);
-        });
+    {
+        mre.set(exception);
+    });
     mre.get();
 }
 
@@ -525,9 +524,9 @@ TEST(websocket_transport_receive_loop, process_response_callback_called_when_mes
     ASSERT_EQ(std::string("msg"), *msg);
 
     ws_transport->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(exception);
-        });
+    {
+        mre.set(exception);
+    });
     mre.get();
 }
 
@@ -608,7 +607,8 @@ public:
         callback(nullptr);
     }
 
-    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
+                      callback) noexcept
     {
         callback(nullptr);
     }
@@ -651,10 +651,10 @@ TEST(stop, error_from_receive_on_stop_properly_closes)
     ws_transport->start("ws://fakeuri.org", [](std::exception_ptr) {});
     auto stop_mre = manual_reset_event<void>();
     ws_transport->stop([&stop_mre, &stop_called](std::exception_ptr ex)
-        {
-            stop_called++;
-            stop_mre.set(ex);
-        });
+    {
+        stop_called++;
+        stop_mre.set(ex);
+    });
     mre.get();
     stop_mre.get();
     ASSERT_EQ(1, on_close_called.load());
@@ -676,7 +676,8 @@ public:
         callback(nullptr);
     }
 
-    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
+                      callback) noexcept
     {
         callback(nullptr);
     }

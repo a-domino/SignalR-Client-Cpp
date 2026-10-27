@@ -14,25 +14,22 @@ namespace signalr
     class messagepack_hub_protocol : public hub_protocol
     {
     public:
-        std::string write_message(const hub_message*) const;
-        std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const;
+        std::string write_message(const hub_message*) const override;
+        std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const override;
 
-        const std::string& name() const
-        {
+        const std::string& name() const override {
             return m_protocol_name;
         }
 
-        int version() const
-        {
+        int version() const override {
             return 1;
         }
 
-        signalr::transfer_format transfer_format() const
-        {
+        signalr::transfer_format transfer_format() const override {
             return signalr::transfer_format::binary;
         }
 
-        ~messagepack_hub_protocol() {}
+        ~messagepack_hub_protocol() override = default;
     private:
         std::string m_protocol_name = "messagepack";
     };

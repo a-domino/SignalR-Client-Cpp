@@ -5,6 +5,8 @@
 #include "stdafx.h"
 #include "signalrclient/signalr_value.h"
 #include "signalrclient/signalr_exception.h"
+
+#include <iostream>
 #include <string>
 
 namespace signalr
@@ -375,5 +377,88 @@ namespace signalr
     value_type value::type() const
     {
         return mType;
+    }
+
+    template <typename K, typename V>
+    static void displayMap(std::ostream& os, const std::map<K, V>& m) {
+        os << "{";
+
+        bool first = true;
+        for (const auto& [key, value] : m) {
+            if (!first) {
+                os << ", ";
+            }
+
+            os << key << ": " << value;
+            first = false;
+        }
+
+        os << "}";
+    }
+
+
+    template <typename V>
+    static void displayVector(std::ostream& os, const std::vector<V>& v) {
+        os << "[";
+
+        bool first = true;
+        for (const auto& value : v) {
+            if (!first) {
+                os << ", ";
+            }
+            os << value;
+            first = false;
+        }
+
+        os << "]";
+    }
+
+
+    std::ostream& operator<<(std::ostream& os, const signalr::value& value) {
+
+        switch (const signalr::value_type value_type = value.type()) {
+        case signalr::value_type::map:
+            {
+                displayMap(os, value.as_map());
+                break;
+            }
+        case signalr::value_type::array:
+            {
+                displayVector(os, value.as_array());
+                break;
+            }
+        case signalr::value_type::string:
+            {
+                os << "\"" << value.as_string() << "\"";
+                break;
+            }
+        case signalr::value_type::float64:
+            {
+                os << value.as_double();
+                break;
+            }
+        case signalr::value_type::null:
+            {
+                os << "null";
+                break;
+            }
+        case signalr::value_type::boolean:
+            {
+                os << (value.as_bool() ? "true" : "false");
+                break;
+            }
+        case signalr::value_type::binary:
+            {
+                displayVector(os, value.as_binary());
+                break;
+            }
+        default:
+            {
+                os << "UNKNOWN - signalr::value_type::unknown<" << static_cast<int>(value_type) << ">";
+                break;
+            }
+        }
+
+        return os;
     }
 }

@@ -12,25 +12,25 @@ namespace signalr
     class json_hub_protocol : public hub_protocol
     {
     public:
-        std::string write_message(const hub_message*) const;
-        std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const;
+        std::string write_message(const hub_message*) const override;
+        std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const override;
 
-        const std::string& name() const
+        const std::string& name() const override
         {
             return m_protocol_name;
         }
 
-        int version() const
+        int version() const override
         {
             return 1;
         }
 
-        signalr::transfer_format transfer_format() const
+        signalr::transfer_format transfer_format() const override
         {
             return signalr::transfer_format::text;
         }
 
-        ~json_hub_protocol() {}
+        ~json_hub_protocol() override = default;
     private:
         std::unique_ptr<hub_message> parse_message(const char* begin, size_t length) const;
 

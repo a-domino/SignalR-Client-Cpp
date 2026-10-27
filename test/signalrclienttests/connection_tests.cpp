@@ -385,9 +385,9 @@ TEST(connection_impl_send, send_fails_if_transport_fails_when_receiving_messages
     mre.get();
 
     connection->send("message", transfer_format::text, [&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -1130,9 +1130,9 @@ TEST(connection_impl_send, message_sent)
     mre.get();
 
     connection->send(message, transfer_format::text, [&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1146,9 +1146,9 @@ TEST(connection_impl_send, send_throws_if_connection_not_connected)
 
     auto mre = manual_reset_event<void>();
     connection->send("whatever", transfer_format::text, [&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -1181,9 +1181,9 @@ TEST(connection_impl_send, exceptions_from_send_logged_and_propagated)
     mre.get();
 
     connection->send("Test message", transfer_format::text, [&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -2238,7 +2238,8 @@ public:
             }).detach();
     }
 
-    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
+                      callback) noexcept
     {
         callback(nullptr);
     }

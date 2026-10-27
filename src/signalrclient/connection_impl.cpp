@@ -11,12 +11,10 @@
 #include "url_builder.h"
 #include "trace_log_writer.h"
 #include "signalrclient/signalr_exception.h"
-#include "default_http_client.h"
 #include "case_insensitive_comparison_utils.h"
 #include "completion_event.h"
 #include <cassert>
 #include "signalrclient/websocket_client.h"
-#include "default_websocket_client.h"
 #include "signalr_default_scheduler.h"
 
 namespace signalr
@@ -55,21 +53,6 @@ namespace signalr
         if (http_client_factory != nullptr)
         {
             m_http_client_factory = http_client_factory;
-        }
-        else
-        {
-#ifdef USE_CPPRESTSDK
-            m_http_client_factory = [](const signalr_client_config& signalr_client_config) { return std::unique_ptr<class http_client>(new default_http_client(signalr_client_config)); };
-#endif
-        }
-
-        if (websocket_factory == nullptr)
-        {
-#ifdef USE_CPPRESTSDK
-#if false
-            websocket_factory = [](const signalr_client_config& signalr_client_config) { return std::make_shared<default_websocket_client>(signalr_client_config); };
-#endif
-#endif
         }
 
         m_transport_factory = std::unique_ptr<transport_factory>(
@@ -114,15 +97,16 @@ namespace signalr
                             {
                                 logger.log(
                                     trace_level::error,
-                                    std::string("shutdown threw an exception: ")
-                                    .append(e.what()));
+                                    std::string("shutdown threw an exception: ").append(e.what())
+                                );
                             }
                         }
                         catch (...)
                         {
                             logger.log(
                                 trace_level::error,
-                                "shutdown threw an unknown exception.");
+                                "shutdown threw an unknown exception."
+                            );
                         }
                     }
 
@@ -347,7 +331,8 @@ namespace signalr
         const auto token = m_disconnect_cts;
 
         auto http_client = m_http_client_factory(m_signalr_client_config);
-        negotiate::negotiate(http_client, url, m_signalr_client_config,
+        negotiate::negotiate(
+            http_client, url, m_signalr_client_config,
             [transport_started, weak_connection, redirect_count, token, url](negotiation_response&& response, std::exception_ptr exception)
             {
                 auto connection = weak_connection.lock();
@@ -411,7 +396,15 @@ namespace signalr
 
                 if (!foundWebsockets)
                 {
-                    transport_started(nullptr, std::make_exception_ptr(signalr_exception("The server does not support WebSockets which is currently the only transport supported by this client.")));
+                    transport_started(
+                        nullptr,
+                        std::make_exception_ptr(
+                            signalr_exception(
+                                "The server does not support WebSockets. This Transport Protocol is currently the"
+                                " only transport supported by this client."
+                            )
+                        )
+                    );
                     return;
                 }
 
@@ -427,7 +420,9 @@ namespace signalr
             }, get_cancellation_token(m_disconnect_cts));
     }
 
-    void connection_impl::start_transport(const std::string& url, std::function<void(std::shared_ptr<transport>, std::exception_ptr)> transport_started)
+    void connection_impl::start_transport(
+        const std::string& url, std::function<void(std::shared_ptr<transport>, std::exception_ptr)> transport_started
+    )
     {
         auto connection = shared_from_this();
 
@@ -436,7 +431,8 @@ namespace signalr
         const auto& logger = m_logger;
 
         auto transport = connection->m_transport_factory->create_transport(
-            transport_type::websockets, connection->m_logger, connection->m_signalr_client_config);
+            transport_type::websockets, connection->m_logger, connection->m_signalr_client_config
+        );
 
         transport->on_close([weak_connection](std::exception_ptr exception)
             {
@@ -450,10 +446,11 @@ namespace signalr
                 // wait for the event in order to avoid a race where the state hasn't changed from connecting
                 // yet and the transport errors out
                 connection->m_start_completed_event.wait();
-                connection->stop_connection(exception);
+                connection->stop_connection(std::move(exception));
             });
 
-        transport->on_receive([disconnect_cts, logger, weak_connection, transport_started](std::string&& message, std::exception_ptr exception)
+        transport->on_receive([disconnect_cts, logger, weak_connection, transport_started]
+            (std::string&& message, std::exception_ptr exception)
             {
                 if (exception == nullptr)
                 {
@@ -461,46 +458,49 @@ namespace signalr
                     {
                         if (logger.is_enabled(trace_level::info))
                         {
-                            logger.log(trace_level::info,
-                                std::string{ "ignoring stray message received after connection was restarted. message: " }
-                            .append(message));
+                            logger.logv(
+                                trace_level::info,
+                                "ignoring stray message received after connection was restarted. message: ", message
+                            );
                         }
                         return;
                     }
 
-                    auto connection = weak_connection.lock();
+                    const auto connection = weak_connection.lock();
                     if (connection)
                     {
                         connection->process_response(std::move(message));
                     }
+                    return;
                 }
-                else
-                {
-                    try
-                    {
-                        // Rethrowing the exception so we can log it
-                        std::rethrow_exception(exception);
-                    }
-                    catch (const std::exception & e)
-                    {
-                        // When a connection is stopped we don't wait for its transport to stop. As a result if the same connection
-                        // is immediately re-started the old transport can still invoke this callback. To prevent this we capture
-                        // the disconnect_cts by value which allows distinguishing if the error is for the running connection
-                        // or for the one that was already stopped. If this is the latter we just ignore it.
-                        if (disconnect_cts->is_canceled())
-                        {
-                            if (logger.is_enabled(trace_level::info))
-                            {
-                                logger.log(trace_level::info,
-                                    std::string{ "ignoring stray error received after connection was restarted. error: " }
-                                .append(e.what()));
-                            }
 
-                            return;
+                try
+                {
+                    // Rethrowing the exception so we can log it
+                    std::rethrow_exception(exception);
+                }
+                catch (const std::exception& e)
+                {
+                    // When a connection is stopped we don't wait for its transport to stop. As a result if the same
+                    // connection is immediately re-started the old transport can still invoke this callback. To prevent
+                    // this we capture the disconnect_cts by value which allows distinguishing if the error is for the
+                    // running connection or for the one that was already stopped. If this is the latter we just ignore
+                    // it.
+                    if (disconnect_cts->is_canceled())
+                    {
+                        if (logger.is_enabled(trace_level::info))
+                        {
+                            logger.logv(
+                                trace_level::info,
+                                "ignoring stray error received after connection was restarted. error: ",
+                                e.what()
+                            );
                         }
 
-                        transport_started(nullptr, exception);
+                        return;
                     }
+
+                    transport_started(nullptr, exception);
                 }
             });
 
@@ -514,7 +514,8 @@ namespace signalr
                 {
                     transport_started(nullptr, exception);
                 }
-            });
+            }
+        );
     }
 
     void connection_impl::send_connect_request(const std::shared_ptr<transport>& transport, const std::string& url, std::function<void(std::exception_ptr)> callback)
@@ -548,23 +549,16 @@ namespace signalr
             });
     }
 
-    void connection_impl::process_response(std::string&& response)
-    {
+    void connection_impl::process_response(std::string&& response) const {
         if (m_logger.is_enabled(trace_level::debug))
         {
             // TODO: log binary data better
-            m_logger.log(trace_level::debug,
-                std::string("processing message: ").append(response));
+            m_logger.log(trace_level::debug, std::string("processing message: ").append(response));
         }
 
-        invoke_message_received(std::move(response));
-    }
-
-    void connection_impl::invoke_message_received(std::string&& message)
-    {
         try
         {
-            m_message_received(std::move(message));
+            m_message_received(std::move(response));
         }
         catch (const std::exception &e)
         {
@@ -582,7 +576,10 @@ namespace signalr
         }
     }
 
-    void connection_impl::send(const std::string& data, transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept
+    void connection_impl::send(
+        const std::string& data, const transfer_format transfer_format,
+        const std::function<void(std::exception_ptr)>& callback
+    ) const noexcept
     {
         // To prevent an (unlikely) condition where the transport is nulled out after we checked the connection_state
         // and before sending data we store the pointer in the local variable. In this case `send()` will throw but
@@ -592,9 +589,13 @@ namespace signalr
         const auto connection_state = get_connection_state();
         if (connection_state != signalr::connection_state::connected || !transport)
         {
-            callback(std::make_exception_ptr(signalr_exception(
-                std::string("cannot send data when the connection is not in the connected state. current connection state: ")
-                    .append(translate_connection_state(connection_state)))));
+            const std::string err_msg_header =
+                "cannot send data when the connection is not in the connected state. current connection state: ";
+            callback(
+                std::make_exception_ptr(
+                    signalr_exception(err_msg_header + translate_connection_state(connection_state))
+                )
+            );
             return;
         }
 
@@ -602,10 +603,12 @@ namespace signalr
 
         if (logger.is_enabled(trace_level::info))
         {
-            logger.log(trace_level::info, std::string("sending data: ").append(data));
+            logger.logv(trace_level::info, "sending data: ", data);
         }
 
-        transport->send(data, transfer_format, [logger, callback](std::exception_ptr exception)
+        transport->send(
+            data, transfer_format,
+            [logger, callback](const std::exception_ptr& exception)
             mutable {
                 try
                 {
@@ -619,15 +622,13 @@ namespace signalr
                 {
                     if (logger.is_enabled(trace_level::error))
                     {
-                        logger.log(
-                            trace_level::error,
-                            std::string("error sending data: ")
-                            .append(e.what()));
+                        logger.logv(trace_level::error, "error sending data: ", e.what());
                     }
 
                     callback(exception);
                 }
-            });
+            }
+        );
     }
 
     void connection_impl::stop(std::function<void(std::exception_ptr)> callback, std::exception_ptr exception) noexcept

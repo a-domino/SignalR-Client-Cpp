@@ -42,7 +42,7 @@ namespace signalr
         ~connection_impl();
 
         void start(std::function<void(std::exception_ptr)> callback) noexcept;
-        void send(const std::string &data, transfer_format transfer_format, std::function<void(std::exception_ptr)> callback) noexcept;
+        void send(const std::string &data, transfer_format transfer_format, const std::function<void(std::exception_ptr)>& callback) const noexcept;
         void stop(std::function<void(std::exception_ptr)> callback, std::exception_ptr exception) noexcept;
 
         connection_state get_connection_state() const noexcept;
@@ -87,7 +87,7 @@ namespace signalr
         void start_negotiate(const std::string& url, std::function<void(std::exception_ptr)> callback);
         void start_negotiate_internal(const std::string& url, int redirect_count, std::function<void(std::shared_ptr<transport> transport, std::exception_ptr)> callback);
 
-        void process_response(std::string&& response);
+        void process_response(std::string&& response) const;
 
         void shutdown(std::function<void(std::exception_ptr)> callback, bool is_dtor = false);
         void stop_connection(std::exception_ptr);
@@ -95,7 +95,6 @@ namespace signalr
         bool change_state(connection_state old_state, connection_state new_state);
         connection_state change_state(connection_state new_state);
         void handle_connection_state_change(connection_state old_state, connection_state new_state);
-        void invoke_message_received(std::string&& message);
 
         static std::string translate_connection_state(connection_state state);
         void ensure_disconnected(const std::string& error_message) const;
