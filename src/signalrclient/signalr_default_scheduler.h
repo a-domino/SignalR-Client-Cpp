@@ -19,8 +19,8 @@ namespace signalr
         thread(const thread&) = delete;
         thread& operator=(const thread&) = delete;
 
-        void add(signalr_base_cb);
-        void start();
+        void add(signalr_base_cb) const;
+        void start() const;
         bool is_free() const;
         void shutdown();
         ~thread();
@@ -50,11 +50,14 @@ namespace signalr
         signalr_default_scheduler(const signalr_default_scheduler&) = delete;
         signalr_default_scheduler& operator=(const signalr_default_scheduler&) = delete;
 
-        void schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay = std::chrono::milliseconds::zero());
-        ~signalr_default_scheduler();
+        void schedule(const signalr_base_cb& cb) override {
+            scheduler::schedule(cb,  std::chrono::milliseconds::zero());
+        }
+        void schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay) override;
+        ~signalr_default_scheduler() override;
 
     private:
-        void run();
+        void run() const;
 
 #pragma warning( push )
 #pragma warning( disable: 4625 5026 4626 5027 )
@@ -63,15 +66,15 @@ namespace signalr
             std::vector<std::pair<signalr_base_cb, std::chrono::time_point<std::chrono::steady_clock, std::chrono::nanoseconds>>> m_callbacks;
             std::mutex m_callback_lock;
             std::condition_variable m_callback_cv;
-            bool m_closed;
+            bool m_closed{};
         };
 #pragma warning( pop )
 
         std::shared_ptr<internals> m_internals;
 
-        void close();
+        void close() const;
     };
 
-    void timer_internal(const std::shared_ptr<scheduler>& scheduler, std::function<bool(std::chrono::milliseconds)> func, std::chrono::milliseconds duration);
-    void timer(const std::shared_ptr<scheduler>& scheduler, std::function<bool(std::chrono::milliseconds)> func);
+    void timer_internal(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func, std::chrono::milliseconds duration);
+    void timer(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func);
 }

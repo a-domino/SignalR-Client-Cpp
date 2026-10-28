@@ -90,7 +90,7 @@ TEST(messagepack_hub_protocol, parse_message)
 {
     for (auto& data : protocol_test_data)
     {
-        auto output = messagepack_hub_protocol().parse_messages(data.first);
+        auto output = messagepack_hub_protocol().parse_and_handle_messages(data.first);
         ASSERT_EQ(1, output.size());
         assert_hub_message_equality(data.second.get(), output[0].get());
     }
@@ -100,7 +100,7 @@ TEST(messagepack_hub_protocol, can_parse_multiple_messages)
 {
     auto payload = string_from_bytes({ 0x0D, 0x96, 0x01, 0x80, 0xC0, 0xA6, 0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x90, 0x90,
         0x07, 0x95, 0x03, 0x80, 0xA1, 0x31, 0x03, 0x2A });
-    auto output = messagepack_hub_protocol().parse_messages(payload);
+    auto output = messagepack_hub_protocol().parse_and_handle_messages(payload);
     ASSERT_EQ(2, output.size());
 
     invocation_message invocation = invocation_message("", "Target", std::vector<value>{});
@@ -114,7 +114,7 @@ TEST(messagepack_hub_protocol, extra_items_ignored_when_parsing)
 {
     invocation_message message = invocation_message("", "Target", std::vector<value>{value(1.f), value("Foo")});
     auto payload = string_from_bytes({ 0x16, 0x97, 0x01, 0x80, 0xC0, 0xA6, 0x54, 0x61, 0x72, 0x67, 0x65, 0x74, 0x92, 0x01, 0xA3, 0x46, 0x6F, 0x6F, 0x90, 0xA3, 0x46, 0x6F, 0x6F});
-    auto output = messagepack_hub_protocol().parse_messages(payload);
+    auto output = messagepack_hub_protocol().parse_and_handle_messages(payload);
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 }
@@ -125,7 +125,7 @@ TEST(messagepack_hub_protocol, unknown_message_type_returns_null)
     auto payload = string_from_bytes({ 0x04, 0x93, 0x6E, 0x80, 0xC0,
         // adding ping message, just make sure other messages are still being parsed
         0x02, 0x91, 0x06 });
-    auto output = messagepack_hub_protocol().parse_messages(payload);
+    auto output = messagepack_hub_protocol().parse_and_handle_messages(payload);
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 }
@@ -161,7 +161,7 @@ TEST(messagepack_hub_protocol, invalid_messages_throw)
     {
         try
         {
-            messagepack_hub_protocol().parse_messages(pair.first);
+            messagepack_hub_protocol().parse_and_handle_messages(pair.first);
             ASSERT_TRUE(false);
         }
         catch (const std::exception& exception)

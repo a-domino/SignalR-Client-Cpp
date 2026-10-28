@@ -14,8 +14,13 @@ namespace signalr
 
     struct scheduler
     {
-        virtual void schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay = std::chrono::milliseconds::zero()) = 0;
+        /**
+         *
+         * @param cb Callback to run
+         */
+        virtual void schedule(const signalr_base_cb& cb) = 0;
+        virtual void schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay) = 0;
 
-        virtual ~scheduler() {}
+        virtual ~scheduler() = default;
     };
 }

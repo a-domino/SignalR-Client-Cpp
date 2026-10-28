@@ -5,14 +5,15 @@
 #pragma once
 
 #include "_exports.h"
-#include <memory>
-#include <functional>
 #include "connection_state.h"
 #include "log_entry_handler.h"
-#include "trace_level.h"
 #include "log_writer.h"
 #include "signalr_client_config.h"
 #include "signalr_value.h"
+#include "trace_level.h"
+
+#include <functional>
+#include <memory>
 
 namespace signalr
 {
@@ -21,11 +22,13 @@ namespace signalr
     class hub_connection_impl;
     class hub_connection_builder;
     class hub_protocol;
+    class message_handler;
+
+    typedef std::function<signalr::value __cdecl (const std::vector<signalr::value>&)> method_invoked_handler;
 
     class hub_connection
     {
     public:
-        typedef std::function<void __cdecl (const std::vector<signalr::value>&)> method_invoked_handler;
 
         SIGNALRCLIENT_API ~hub_connection();
 

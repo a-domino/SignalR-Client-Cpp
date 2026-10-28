@@ -22,6 +22,11 @@ namespace signalr
         callback_manager& operator=(const callback_manager&) = delete;
 
         std::string register_complete_callback(const std::function<void(const char*, value&&)>& callback);
+        std::string register_stream_callbacks(
+            const std::function<void(value&&)>& stream_item_callback,
+            const std::function<void(const char*, value&&)>& complete_callback
+        );
+        bool handle_stream_item_callback(const std::string& callback_id, value&& item) const;
         bool invoke_complete_callback(
             const std::string& callback_id, const char* error, value&& arguments, bool remove_callback
         );
@@ -30,8 +35,9 @@ namespace signalr
 
     private:
         std::atomic<int> m_id { 0 };
+        std::unordered_map<std::string, std::function<void(signalr::value&&)>> m_handle_item_callbacks;
         std::unordered_map<std::string, std::function<void(const char*, signalr::value&&)>> m_complete_callbacks;
-        std::mutex m_map_lock;
+        mutable std::mutex m_map_lock;
         std::string m_dtor_clear_arguments;
 
         std::string get_callback_id();

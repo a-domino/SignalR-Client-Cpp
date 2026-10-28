@@ -3,9 +3,10 @@
 // See the LICENSE file in the project root for more information.
 
 #include "stdafx.h"
-#include <assert.h>
+#include <cassert>
 #include "signalr_default_scheduler.h"
 #include <thread>
+#include <utility>
 
 namespace signalr
 {
@@ -69,20 +70,18 @@ namespace signalr
             });
     }
 
-    void thread::add(signalr_base_cb cb)
-    {
+    void thread::add(signalr_base_cb cb) const {
         {
             assert(m_internals->m_closed == false);
             assert(m_internals->m_busy == false);
 
             std::lock_guard<std::mutex> lock(m_internals->m_callback_lock);
-            m_internals->m_callback = cb;
+            m_internals->m_callback = std::move(cb);
             m_internals->m_busy = true;
         } // unlock
     }
 
-    void thread::start()
-    {
+    void thread::start() const {
         m_internals->m_callback_cv.notify_one();
     }
 
@@ -106,12 +105,12 @@ namespace signalr
         shutdown();
     }
 
-    void signalr_default_scheduler::schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay)
+    void signalr_default_scheduler::schedule(const signalr_base_cb& cb, const std::chrono::milliseconds delay)
     {
         {
             std::lock_guard<std::mutex> lock(m_internals->m_callback_lock);
             assert(m_internals->m_closed == false);
-            m_internals->m_callbacks.push_back(std::make_pair(cb, std::chrono::steady_clock::now() + delay));
+            m_internals->m_callbacks.emplace_back(cb, std::chrono::steady_clock::now() + delay);
         } // unlock
 
         // If callback has a delay, no point in running the logic to check if it should run early
@@ -121,8 +120,7 @@ namespace signalr
         }
     }
 
-    void signalr_default_scheduler::run()
-    {
+    void signalr_default_scheduler::run() const {
         auto internals = m_internals;
 
         std::thread([=]()
@@ -162,8 +160,8 @@ namespace signalr
                                 if (thread.is_free())
                                 {
                                     {
-                                        thread.add((*it).first);
-                                        (*it).first = nullptr;
+                                        thread.add(it->first);
+                                        it->first = nullptr;
                                         // destruct callback in case the destructor can schedule a job which would throw on recursive lock acquisition
                                     }
                                     thread.start();
@@ -193,8 +191,7 @@ namespace signalr
             }).detach();
     }
 
-    void signalr_default_scheduler::close()
-    {
+    void signalr_default_scheduler::close() const {
         m_internals->m_closed = true;
         m_internals->m_callback_cv.notify_one();
     }
@@ -205,12 +202,12 @@ namespace signalr
     }
 
     // This will schedule the given func to run every second until the func returns true.
-    void timer(const std::shared_ptr<scheduler>& scheduler, std::function<bool(std::chrono::milliseconds)> func)
+    void timer(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func)
     {
         timer_internal(scheduler, func, std::chrono::milliseconds::zero());
     }
 
-    void timer_internal(const std::shared_ptr<scheduler>& scheduler, std::function<bool(std::chrono::milliseconds)> func, std::chrono::milliseconds duration)
+    void timer_internal(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func, std::chrono::milliseconds duration)
     {
         constexpr auto tick = std::chrono::seconds(1);
         duration += tick;

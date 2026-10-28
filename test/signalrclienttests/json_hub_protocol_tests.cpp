@@ -76,7 +76,7 @@ TEST(json_hub_protocol, parse_message)
 {
     for (auto& data : protocol_test_data)
     {
-        auto output = json_hub_protocol().parse_messages(data.first);
+        auto output = json_hub_protocol().parse_and_handle_messages(data.first);
         ASSERT_EQ(1, output.size());
         assert_hub_message_equality(data.second.get(), output[0].get());
     }
@@ -85,15 +85,15 @@ TEST(json_hub_protocol, parse_message)
 TEST(json_hub_protocol, parsing_field_order_does_not_matter)
 {
     invocation_message message = invocation_message("123", "Target", std::vector<value>{value(true)});
-    auto output = json_hub_protocol().parse_messages("{\"type\":1,\"invocationId\":\"123\",\"arguments\":[true],\"target\":\"Target\"}\x1e");
+    auto output = json_hub_protocol().parse_and_handle_messages("{\"type\":1,\"invocationId\":\"123\",\"arguments\":[true],\"target\":\"Target\"}\x1e");
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 
-    output = json_hub_protocol().parse_messages("{\"target\":\"Target\",\"invocationId\":\"123\",\"type\":1,\"arguments\":[true]}\x1e");
+    output = json_hub_protocol().parse_and_handle_messages("{\"target\":\"Target\",\"invocationId\":\"123\",\"type\":1,\"arguments\":[true]}\x1e");
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 
-    output = json_hub_protocol().parse_messages("{\"target\":\"Target\",\"arguments\":[true],\"type\":1,\"invocationId\":\"123\"}\x1e");
+    output = json_hub_protocol().parse_and_handle_messages("{\"target\":\"Target\",\"arguments\":[true],\"type\":1,\"invocationId\":\"123\"}\x1e");
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 }
@@ -109,7 +109,7 @@ TEST(json_hub_protocol, can_serialize_binary)
 
 TEST(json_hub_protocol, can_parse_multiple_messages)
 {
-    auto output = json_hub_protocol().parse_messages(std::string("{\"arguments\":[],\"target\":\"Target\",\"type\":1}\x1e") +
+    auto output = json_hub_protocol().parse_and_handle_messages(std::string("{\"arguments\":[],\"target\":\"Target\",\"type\":1}\x1e") +
         "{\"invocationId\":\"1\",\"result\":42,\"type\":3}\x1e");
     ASSERT_EQ(2, output.size());
 
@@ -123,7 +123,7 @@ TEST(json_hub_protocol, can_parse_multiple_messages)
 TEST(json_hub_protocol, extra_items_ignored_when_parsing)
 {
     invocation_message message = invocation_message("", "Target", std::vector<value>{value(true)});
-    auto output = json_hub_protocol().parse_messages("{\"type\":1,\"arguments\":[true],\"target\":\"Target\",\"extra\":\"ignored\"}\x1e");
+    auto output = json_hub_protocol().parse_and_handle_messages("{\"type\":1,\"arguments\":[true],\"target\":\"Target\",\"extra\":\"ignored\"}\x1e");
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 }
@@ -132,7 +132,7 @@ TEST(json_hub_protocol, unknown_message_type_returns_null)
 {
     ping_message message = ping_message();
     // adding ping message, just make sure other messages are still being parsed
-    auto output = json_hub_protocol().parse_messages("{\"type\":142}\x1e{\"type\":6}\x1e");
+    auto output = json_hub_protocol().parse_and_handle_messages("{\"type\":142}\x1e{\"type\":6}\x1e");
     ASSERT_EQ(1, output.size());
     assert_hub_message_equality(&message, output[0].get());
 }
@@ -164,7 +164,7 @@ TEST(json_hub_protocol, invalid_messages_throw)
     {
         try
         {
-            json_hub_protocol().parse_messages(pair.first);
+            json_hub_protocol().parse_and_handle_messages(pair.first);
             ASSERT_TRUE(false);
         }
         catch (const std::exception& exception)

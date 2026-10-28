@@ -578,9 +578,8 @@ namespace signalr
 
     void connection_impl::send(
         const std::string& data, const transfer_format transfer_format,
-        const std::function<void(std::exception_ptr)>& callback
-    ) const noexcept
-    {
+        const std::function<void(std::exception_ptr)>& msg_sent_callback
+    ) const noexcept {
         // To prevent an (unlikely) condition where the transport is nulled out after we checked the connection_state
         // and before sending data we store the pointer in the local variable. In this case `send()` will throw but
         // we won't crash.
@@ -591,7 +590,7 @@ namespace signalr
         {
             const std::string err_msg_header =
                 "cannot send data when the connection is not in the connected state. current connection state: ";
-            callback(
+            msg_sent_callback(
                 std::make_exception_ptr(
                     signalr_exception(err_msg_header + translate_connection_state(connection_state))
                 )
@@ -608,7 +607,7 @@ namespace signalr
 
         transport->send(
             data, transfer_format,
-            [logger, callback](const std::exception_ptr& exception)
+            [logger, msg_sent_callback](const std::exception_ptr& exception)
             mutable {
                 try
                 {
@@ -616,7 +615,7 @@ namespace signalr
                     {
                         std::rethrow_exception(exception);
                     }
-                    callback(nullptr);
+                    msg_sent_callback(nullptr);
                 }
                 catch (const std::exception &e)
                 {
@@ -625,7 +624,7 @@ namespace signalr
                         logger.logv(trace_level::error, "error sending data: ", e.what());
                     }
 
-                    callback(exception);
+                    msg_sent_callback(exception);
                 }
             }
         );

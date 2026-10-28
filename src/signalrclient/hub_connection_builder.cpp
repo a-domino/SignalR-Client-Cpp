@@ -3,10 +3,12 @@
 // See the LICENSE file in the project root for more information.
 
 #include "signalrclient/hub_connection_builder.h"
-#include <stdexcept>
-#include <utility>
 #include "json_hub_protocol.h"
 #include "messagepack_hub_protocol.h"
+
+#include <memory>
+#include <stdexcept>
+#include <utility>
 
 namespace signalr
 {

@@ -2,7 +2,6 @@ set (SOURCES
   callback_manager.cpp
   cancellation_token.cpp
   cancellation_token_source.cpp
-  cancel_stream.cpp
   connection_impl.cpp
   handshake_protocol.cpp
   hub_connection.cpp

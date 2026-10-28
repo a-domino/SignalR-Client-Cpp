@@ -8,8 +8,10 @@
 
 namespace signalr
 {
-    class cancel_stream {
-
+    class cancel_stream_interface {
+    public:
+        virtual bool cancel() = 0;
+        virtual ~cancel_stream_interface() = default;
     };
 }
 

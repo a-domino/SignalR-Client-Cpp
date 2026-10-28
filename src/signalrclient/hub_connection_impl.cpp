@@ -15,6 +15,7 @@
 #include "handshake_protocol.h"
 #include "signalrclient/websocket_client.h"
 #include "signalr_default_scheduler.h"
+#include "signalrclient/hub_connection.h"
 
 namespace signalr
 {
@@ -63,14 +64,94 @@ namespace signalr
       , m_handshakeReceived(false), m_disconnected([](std::exception_ptr) noexcept {})
       , m_protocol(std::move(hub_protocol))
     {
-        hub_message ping_msg(signalr::message_type::ping);
-        m_cached_ping = m_protocol->write_message(&ping_msg);
+        const ping_message ping_msg{};
+        m_cached_ping = m_protocol->write_ping_message(&ping_msg);
+    }
+
+    void hub_connection_impl::same_thread_message_handler::handle_invocation_message(
+        invocation_message&& invocation_msg
+    ) {
+        auto hub_conn_impl = m_hub_conn_impl.lock();
+        if (hub_conn_impl == nullptr) {
+            return;
+        }
+        method_invoked_handler event_handler = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(hub_conn_impl->m_subscriptions_mutex);
+            auto event = hub_conn_impl->m_subscriptions.find(invocation_msg.target);
+            if (event != hub_conn_impl->m_subscriptions.end())
+            {
+                event_handler = event->second;
+            }
+        }
+        if (event_handler != nullptr) {
+            const auto& args = invocation_msg.arguments;
+            signalr::value event_resp;
+            try {
+                event_resp = event_handler(args);
+            }
+            catch (const std::exception& e)
+            {
+                // Send completion message w/ invocation ID & error message.
+                hub_conn_impl->send_invoke_completion(
+                    invocation_msg.invocation_id, value(), std::make_exception_ptr(e)
+                );
+                return;
+            }
+
+            try {
+                hub_conn_impl->send_invoke_completion(invocation_msg.invocation_id, event_resp, nullptr);
+            }
+            catch (const std::exception& e) {
+                if (hub_conn_impl->m_logger.is_enabled(trace_level::error)) {
+                    std::stringstream ss;
+                    ss << "Encountered error while sending invoke completion response, '" << event_resp
+                       << "', w/ invocationID=" << invocation_msg.invocation_id << ": " << e.what();
+                    hub_conn_impl->m_logger.log(trace_level::error, ss.str());
+                }
+            }
+            catch (...) {
+                if (hub_conn_impl->m_logger.is_enabled(trace_level::error)) {
+                    std::stringstream ss;
+                    ss << "Encountered unknown error while sending invoke completion response, '"
+                       << event_resp << "', w/ invocationID=" << invocation_msg.invocation_id << ": ";
+                    hub_conn_impl->m_logger.log(trace_level::error, ss.str());
+                }
+            }
+        } else {
+            hub_conn_impl->m_logger.log(trace_level::info, "handler not found");
+            hub_conn_impl->send_invoke_completion(
+                invocation_msg.invocation_id, value(),
+                std::make_exception_ptr(signalr_exception("handler not found"))
+            );
+        }
+    }
+
+    void hub_connection_impl::same_thread_message_handler::handle_stream_item_message(
+        stream_item_message&& stream_item_msg
+    ) {
+
+    }
+
+    bool hub_connection_impl::cancel_stream::cancel() {
+        auto hub_conn_impl = m_hub.lock();
+        if (hub_conn_impl == nullptr) {
+            return false;
+        }
+
+        cancel_invocation_message cancel_msg{m_callback_id};
+
+
+        return false;
     }
 
     void hub_connection_impl::initialize()
     {
         // weak_ptr prevents a circular dependency leading to memory leak and other problems
         std::weak_ptr<hub_connection_impl> weak_hub_connection = shared_from_this();
+
+        m_message_handler = same_thread_message_handler::create(weak_hub_connection);
+        m_parser_and_handler = m_protocol->create_parser_and_handler(m_message_handler);
 
         m_connection->set_message_received([weak_hub_connection](std::string&& message)
         {
@@ -112,9 +193,7 @@ namespace signalr
         );
     }
 
-    void hub_connection_impl::on(
-        const std::string& event_name, const std::function<value(const std::vector<value>&)>& handler
-    )
+    void hub_connection_impl::on(const std::string& event_name, const method_invoked_handler& handler)
     {
         if (event_name.empty())
         {
@@ -393,7 +472,9 @@ namespace signalr
             }
 
             reset_server_timeout();
-            auto messages = m_protocol->parse_messages(response);
+            m_parser_and_handler->parse_and_handle_messages(response);
+
+            auto messages = m_protocol->parse_and_handle_messages(response);
 
             for (const auto& val : messages)
             {
@@ -530,8 +611,23 @@ namespace signalr
         const std::string& invocation_id, const signalr::value& response, const std::exception_ptr& err
     ) const {
         try {
-            completion_message compl_msg{invocation_id, formatException(err), response, !response.is_null()};
-            const auto message = m_protocol->write_message(&compl_msg);
+            std::unique_ptr<completion_message> compl_msg;
+            if (err != nullptr) {
+                compl_msg = std::unique_ptr<completion_message>(
+                    new completion_message(
+                        invocation_id, formatException(err), response, completion_message::result_kind::error_result
+                    )
+                );
+            } else {
+                compl_msg = std::unique_ptr<completion_message>(
+                    new completion_message(
+                        invocation_id, "", response,
+                        response.is_null() ? completion_message::result_kind::void_result
+                                           : completion_message::result_kind::non_void_result
+                    )
+                );
+            }
+            const auto message = m_protocol->write_completion_message(compl_msg.get());
 
             const auto logger = m_logger;
             if (err != nullptr) {
@@ -645,82 +741,96 @@ namespace signalr
         const auto& callback_id = m_callback_manager.register_complete_callback(
             create_hub_invocation_callback(callback)
         );
-
-        invoke_hub_method(
-            method_name, arguments, callback_id, nullptr,
-            [callback](const std::exception_ptr e){ callback(signalr::value(), e); }
-        );
-    }
-
-    void hub_connection_impl::send(
-        const std::string& method_name, const std::vector<signalr::value>& arguments,
-        std::function<void(std::exception_ptr)> callback
-    ) noexcept
-    {
-        invoke_hub_method(
-            method_name, arguments, "",
-            [callback]() { callback(nullptr); },
-            [callback](const std::exception_ptr e){ callback(e); }
-        );
-    }
-
-    void hub_connection_impl::invoke_hub_method(
-        const std::string& method_name, const std::vector<signalr::value>& arguments, const std::string& callback_id,
-        const std::function<void()>& set_completion, const std::function<void(std::exception_ptr)>& set_exception
-    ) noexcept
-    {
-        try
-        {
+        try {
             const invocation_message invocation(callback_id, method_name, arguments);
-            const auto message = m_protocol->write_message(&invocation);
+            const auto message = m_protocol->write_invocation_message(&invocation);
 
             // weak_ptr prevents a circular dependency leading to memory leak and other problems
             std::weak_ptr<hub_connection_impl> weak_hub_connection = shared_from_this();
 
             m_connection->send(
                 message, m_protocol->transfer_format(),
-                [set_completion, set_exception, weak_hub_connection, callback_id]
-                (const std::exception_ptr& exception)
-                {
-                    if (exception)
-                    {
+                [callback, weak_hub_connection, callback_id](const std::exception_ptr& exception) {
+                    if (exception) {
                         const auto hub_connection = weak_hub_connection.lock();
-                        if (hub_connection)
-                        {
-                            hub_connection->m_callback_manager.remove_complete_callback(callback_id);
-                        }
-                        set_exception(exception);
-                    }
-                    else
-                    {
-                        if (callback_id.empty())
-                        {
-                            // complete nonBlocking call
-                            set_completion();
+                        if (
+                            hub_connection != nullptr &&
+                            hub_connection->m_callback_manager.remove_complete_callback(callback_id)
+                        ) {
+                            callback(value(), exception);
                         }
                     }
                 }
             );
 
             reset_send_ping();
+        } catch (const std::exception& e) {
+            m_callback_manager.remove_complete_callback(callback_id);
+            if (m_logger.is_enabled(trace_level::warning))
+            {
+                m_logger.logv(trace_level::warning, "failed to invoke invocation: ", e.what());
+            }
+            callback(value(), std::current_exception());
+        }
+    }
+
+    void hub_connection_impl::send(
+        const std::string& method_name, const std::vector<signalr::value>& arguments,
+        const std::function<void(std::exception_ptr)>& callback
+    ) noexcept
+    {
+        try {
+            const invocation_message invocation("", method_name, arguments);
+            const auto message = m_protocol->write_invocation_message(&invocation);
+
+            // weak_ptr prevents a circular dependency leading to memory leak and other problems
+            std::weak_ptr<hub_connection_impl> weak_hub_connection = shared_from_this();
+
+            m_connection->send(message, m_protocol->transfer_format(), callback);
+
+            reset_send_ping();
+        } catch (const std::exception& e) {
+            if (m_logger.is_enabled(trace_level::warning))
+            {
+                m_logger.logv(trace_level::warning, "failed to send invocation: ", e.what());
+            }
+            callback(std::current_exception());
+        }
+    }
+
+    std::unique_ptr<cancel_stream_interface> hub_connection_impl::stream(
+        const std::string& method_name,
+        const std::vector<signalr::value>& arguments, const std::function<void(signalr::value&&)>& handle_item_callback,
+        const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
+    ) {
+        const auto& callback_id = m_callback_manager.register_stream_callbacks(
+            handle_item_callback, create_hub_invocation_callback(completion_callback)
+        );
+
+        try {
+            const stream_invocation_message stream_invocation_msg(callback_id, method_name, arguments);
+            const auto message = m_protocol->write_stream_invocation_message(&stream_invocation_msg);
+
+            std::weak_ptr<hub_connection_impl> weak_hub_connection = shared_from_this();
+
+            m_connection->send(
+                message, m_protocol->transfer_format(),
+                [completion_callback, weak_hub_connection, callback_id](const std::exception_ptr& exception) {
+                    if (exception != nullptr) {
+
+                    }
+                }
+            );
         }
         catch (const std::exception& e)
         {
             m_callback_manager.remove_complete_callback(callback_id);
             if (m_logger.is_enabled(trace_level::warning))
             {
-                m_logger.logv(trace_level::warning, "failed to send invocation: ", e.what());
+                m_logger.logv(trace_level::warning, "failed to send stream invocation: ", e.what());
             }
-            set_exception(std::current_exception());
+            completion_callback(value(), std::current_exception());
         }
-    }
-
-    cancel_stream hub_connection_impl::stream(
-        const std::string& method_name,
-        const std::vector<signalr::value>& arguments, std::function<void(signalr::value&&)> handle_item_callback,
-        std::function<void(value&&, const std::exception_ptr&)> completion_callback
-    ) {
-
     }
 
     connection_state hub_connection_impl::get_connection_state() const noexcept

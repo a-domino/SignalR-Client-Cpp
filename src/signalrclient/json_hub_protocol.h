@@ -13,7 +13,7 @@ namespace signalr
     {
     public:
         std::string write_message(const hub_message*) const override;
-        std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const override;
+        std::vector<std::unique_ptr<hub_message>> parse_and_handle_messages(const std::string&) const override;
 
         const std::string& name() const override
         {

@@ -1829,7 +1829,7 @@ class throw_hub_protocol : public hub_protocol
         }
         throw signalr_exception("throw from write_message");
     }
-    virtual std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string&) const override
+    virtual std::vector<std::unique_ptr<hub_message>> parse_and_handle_messages(const std::string&) const override
     {
         return std::vector<std::unique_ptr<hub_message>>();
     }
@@ -1906,7 +1906,7 @@ class empty_hub_protocol : public hub_protocol
     {
         return std::string { };
     }
-    virtual std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string& str) const override
+    virtual std::vector<std::unique_ptr<hub_message>> parse_and_handle_messages(const std::string& str) const override
     {
         auto vec = std::vector<std::unique_ptr<hub_message>>();
         if (str.find("\"target\"") != std::string::npos)
@@ -2129,7 +2129,7 @@ class unknown_message_type_hub_protocol : public hub_protocol
     {
         return std::string{ };
     }
-    virtual std::vector<std::unique_ptr<hub_message>> parse_messages(const std::string& str) const override
+    virtual std::vector<std::unique_ptr<hub_message>> parse_and_handle_messages(const std::string& str) const override
     {
         auto vec = std::vector<std::unique_ptr<hub_message>>();
         vec.push_back(std::unique_ptr<hub_message>(new custom_hub_message()));

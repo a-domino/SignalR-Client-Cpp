@@ -62,7 +62,7 @@ namespace signalr
         return Json::writeString(getJsonWriter(), object) + record_separator;
     }
 
-    std::vector<std::unique_ptr<hub_message>> json_hub_protocol::parse_messages(const std::string& message) const
+    std::vector<std::unique_ptr<hub_message>> json_hub_protocol::parse_and_handle_messages(const std::string& message) const
     {
         std::vector<std::unique_ptr<hub_message>> vec;
         size_t offset = 0;

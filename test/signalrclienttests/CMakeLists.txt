@@ -38,7 +38,6 @@ list (APPEND SOURCES
   ../../src/signalrclient/callback_manager.cpp
   ../../src/signalrclient/cancellation_token.cpp
   ../../src/signalrclient/cancellation_token_source.cpp
-  ../../src/signalrclient/cancel_stream.cpp
   ../../src/signalrclient/connection_impl.cpp
   ../../src/signalrclient/handshake_protocol.cpp
   ../../src/signalrclient/hub_connection.cpp
