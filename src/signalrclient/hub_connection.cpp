@@ -46,10 +46,13 @@ namespace signalr
         if (m_pImpl)
         {
             completion_event completion;
-            m_pImpl->stop([completion](std::exception_ptr) mutable
+            m_pImpl->stop(
+                [completion](const std::exception_ptr&) mutable
                 {
                     completion.set();
-                }, /* is_dtor */true);
+                },
+                nullptr, /* is_dtor */true
+            );
             completion.get();
         }
     }
@@ -64,18 +67,17 @@ namespace signalr
         m_pImpl->start(callback);
     }
 
-    void hub_connection::stop(std::function<void(std::exception_ptr)> callback) noexcept
+    void hub_connection::stop(const std::function<void(const std::exception_ptr&)>& callback) const noexcept
     {
         if (!m_pImpl)
         {
             callback(std::make_exception_ptr(signalr_exception("stop() cannot be called on destructed hub_connection instance")));
         }
 
-        m_pImpl->stop(callback);
+        m_pImpl->stop(callback, nullptr);
     }
 
-    void hub_connection::on(const std::string& event_name, const method_invoked_handler& handler)
-    {
+    void hub_connection::on(const std::string& event_name, const method_invoked_handler& handler) const {
         if (!m_pImpl)
         {
             throw signalr_exception("on() cannot be called on destructed hub_connection instance");
@@ -86,7 +88,7 @@ namespace signalr
 
     void hub_connection::invoke(
         const std::string& method_name, const std::vector<signalr::value>& arguments,
-        std::function<void(signalr::value&&, std::exception_ptr)> callback
+        const std::function<void(value&&, const std::exception_ptr&)>& callback
     ) const noexcept
     {
         if (!m_pImpl)
@@ -95,7 +97,7 @@ namespace signalr
             return;
         }
 
-        return m_pImpl->invoke(method_name, arguments, std::move(callback));
+        return m_pImpl->invoke(method_name, arguments, callback);
     }
 
     void hub_connection::send(const std::string& method_name, const std::vector<signalr::value>& arguments, std::function<void(std::exception_ptr)> callback) noexcept
@@ -129,8 +131,9 @@ namespace signalr
         return m_pImpl->get_connection_id();
     }
 
-    void hub_connection::set_disconnected(const std::function<void(std::exception_ptr)>& disconnected_callback)
-    {
+    void hub_connection::set_disconnected(
+        const std::function<void(const std::exception_ptr&)>& disconnected_callback
+    ) const {
         if (!m_pImpl)
         {
             throw signalr_exception("set_disconnected() cannot be called on destructed hub_connection instance");

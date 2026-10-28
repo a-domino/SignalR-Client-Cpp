@@ -7,7 +7,10 @@
 #define STRINGIFY_2(s) #s
 #define STRINGIFY(s) STRINGIFY_2(s)
 #include <exception>
+#include <iostream>
+#include <map>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32 // used in the default log writer and to build the dll
 
@@ -32,4 +35,41 @@ inline std::string formatException(const std::exception_ptr& ex) noexcept {
     } catch (...) {
         return "Unknown non-standard exception";
     }
+}
+
+template <typename K, typename V>
+void displayMap(std::ostream& os, const std::map<K, V>& m) {
+    os << "{";
+
+    bool first = true;
+    for (const auto& kvp : m) {
+        if (!first) {
+            os << ", ";
+        }
+
+        os << kvp.first << ": " << kvp.second;
+        first = false;
+    }
+
+    os << "}";
+}
+
+
+template <typename V>
+void displayVector(
+    std::ostream& os, const std::vector<V>& v,
+    const std::pair<std::string, std::string>& start_end_delimiters = {"[", "]"}
+) {
+    os << start_end_delimiters.first;
+
+    bool first = true;
+    for (const auto& value : v) {
+        if (!first) {
+            os << ", ";
+        }
+        os << value;
+        first = false;
+    }
+
+    os << start_end_delimiters.second;
 }

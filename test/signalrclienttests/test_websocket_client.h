@@ -21,7 +21,7 @@ public:
 
     void set_config(const signalr_client_config&);
 
-    void start(const std::string& url, std::function<void(std::exception_ptr)> callback);
+    void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback);
 
     void stop(std::function<void(std::exception_ptr)> callback);
 

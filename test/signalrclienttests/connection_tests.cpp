@@ -45,18 +45,18 @@ TEST(connection_impl_start, cannot_start_non_disconnected_exception)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     try
     {
         connection->start([&mre](std::exception_ptr exception)
-            {
-                mre.set(std::move(exception));
-            });
+        {
+            mre.set(std::move(exception));
+        });
         mre.get();
         ASSERT_TRUE(false); // exception not thrown
     }
@@ -83,9 +83,9 @@ TEST(connection_impl_start, connection_state_is_connecting_when_connection_is_be
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     ASSERT_EQ(connection->get_connection_state(), connection_state::connecting);
     state_mre.set();
@@ -106,9 +106,9 @@ TEST(connection_impl_start, connection_state_is_connected_when_connection_establ
     auto connection = create_connection();
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
     mre.get();
     ASSERT_EQ(connection->get_connection_state(), connection_state::connected);
 }
@@ -131,9 +131,9 @@ TEST(connection_impl_start, connection_state_is_disconnected_when_connection_can
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -157,9 +157,9 @@ TEST(connection_impl_start, throws_for_invalid_uri)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -198,9 +198,9 @@ TEST(connection_impl_start, start_sets_id_query_string)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -239,9 +239,9 @@ TEST(connection_impl_start, start_appends_id_query_string)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -276,9 +276,9 @@ TEST(connection_impl_start, start_logs_exceptions)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -314,9 +314,9 @@ TEST(connection_impl_start, start_propagates_exceptions_from_negotiate)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -344,9 +344,9 @@ TEST(connection_impl_start, start_fails_if_transport_connect_throws)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -378,9 +378,9 @@ TEST(connection_impl_send, send_fails_if_transport_fails_when_receiving_messages
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -426,9 +426,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_request_fails)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -474,9 +474,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_has_error)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -518,9 +518,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_does_not_have_webs
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -560,9 +560,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_does_not_have_tran
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -602,9 +602,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_is_invalid)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -657,9 +657,9 @@ TEST(connection_impl_start, negotiate_follows_redirect)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -712,9 +712,9 @@ TEST(connection_impl_start, negotiate_redirect_uses_accessToken)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -750,9 +750,9 @@ TEST(connection_impl_start, negotiate_fails_after_too_many_redirects)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -792,9 +792,9 @@ TEST(connection_impl_start, negotiate_fails_if_ProtocolVersion_in_response)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -845,22 +845,22 @@ TEST(connection_impl_start, negotiate_redirect_does_not_overwrite_url)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
     mre.get();
     ASSERT_EQ(1, redirectCount);
 
     connection->stop([&mre](std::exception_ptr)
-        {
-            mre.set();
-        }, nullptr);
+    {
+        mre.set();
+    }, nullptr);
     mre.get();
 
     connection->start([&mre](std::exception_ptr)
-        {
-            mre.set();
-        });
+    {
+        mre.set();
+    });
     mre.get();
     ASSERT_EQ(2, redirectCount);
 }
@@ -907,9 +907,9 @@ TEST(connection_impl_start, negotiate_redirect_uses_own_query_string)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -963,9 +963,9 @@ TEST(connection_impl_start, negotiate_with_negotiateVersion_uses_connectionToken
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -1017,9 +1017,9 @@ TEST(connection_impl_start, correct_connection_id_returned_with_negotiateVersion
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1063,9 +1063,9 @@ TEST(connection_impl_start, negotiate_can_be_skipped)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1089,9 +1089,9 @@ TEST(connection_impl_process_response, process_response_logs_messages)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1123,9 +1123,9 @@ TEST(connection_impl_send, message_sent)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1174,9 +1174,9 @@ TEST(connection_impl_send, exceptions_from_send_logged_and_propagated)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1226,9 +1226,9 @@ TEST(connection_impl_set_message_received, callback_invoked_when_message_receive
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1263,9 +1263,9 @@ TEST(connection_impl_set_message_received, exception_from_callback_caught_and_lo
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1303,9 +1303,9 @@ TEST(connection_impl_set_message_received, non_std_exception_from_callback_caugh
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1327,9 +1327,9 @@ void can_be_set_only_in_disconnected_state(std::function<void(connection_impl*)>
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1364,9 +1364,9 @@ TEST(connection_impl_stop, stopping_disconnected_connection_is_no_op)
     auto connection = create_connection(create_test_websocket_client(), writer, trace_level::verbose);
     auto mre = manual_reset_event<void>();
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1398,24 +1398,24 @@ TEST(connection_impl_stop, stopping_disconnecting_connection_returns_canceled_ta
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     try
     {
         auto mre_stop = manual_reset_event<void>();
         connection->stop([&mre_stop](std::exception_ptr exception)
-            {
-                mre_stop.set(std::move(exception));
-            }, nullptr);
+        {
+            mre_stop.set(std::move(exception));
+        }, nullptr);
 
         mre_stop.get();
         ASSERT_FALSE(true); // exception expected but not thrown
@@ -1446,16 +1446,16 @@ TEST(connection_impl_stop, can_start_and_stop_connection)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1477,23 +1477,23 @@ TEST(connection_impl_stop, can_start_and_stop_connection_multiple_times)
 
         auto mre = manual_reset_event<void>();
         connection->start([&mre](std::exception_ptr exception)
-            {
-                mre.set(std::move(exception));
-            });
+        {
+            mre.set(std::move(exception));
+        });
 
         mre.get();
 
         connection->stop([&mre](std::exception_ptr exception)
-            {
-                mre.set(std::move(exception));
-            }, nullptr);
+        {
+            mre.set(std::move(exception));
+        }, nullptr);
 
         mre.get();
 
         connection->start([&mre](std::exception_ptr exception)
-            {
-                mre.set(std::move(exception));
-            });
+        {
+            mre.set(std::move(exception));
+        });
 
         mre.get();
     }
@@ -1538,9 +1538,9 @@ TEST(connection_impl_stop, dtor_stops_the_connection)
 
         auto mre = manual_reset_event<void>();
         connection->start([&mre](std::exception_ptr exception)
-            {
-                mre.set(std::move(exception));
-            });
+        {
+            mre.set(std::move(exception));
+        });
 
         mre.get();
     }
@@ -1602,24 +1602,24 @@ TEST(connection_impl_stop, stop_cancels_ongoing_start_request)
     );
 
     connection->set_disconnected([](std::exception_ptr)
-        {
-            ASSERT_TRUE(false);
-        });
+    {
+        ASSERT_TRUE(false);
+    });
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     wait_for_start_mre.get();
 
     auto stop_mre = manual_reset_event<void>();
     connection->stop([disconnect_completed_event, &stop_mre](std::exception_ptr)
-        {
-            disconnect_completed_event->cancel();
-            stop_mre.set();
-        }, nullptr);
+    {
+        disconnect_completed_event->cancel();
+        stop_mre.set();
+    }, nullptr);
 
     try
     {
@@ -1681,14 +1681,14 @@ TEST(connection_impl_stop, ongoing_start_request_canceled_if_connection_stopped_
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     connection->stop([&stop_mre](std::exception_ptr exception)
-        {
-            stop_mre.set(std::move(exception));
-        }, nullptr);
+    {
+        stop_mre.set(std::move(exception));
+    }, nullptr);
 
     try
     {
@@ -1730,16 +1730,16 @@ TEST(connection_impl_stop, stop_invokes_disconnected_callback)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1757,16 +1757,16 @@ TEST(connection_impl_stop, std_exception_from_disconnected_callback_caught_and_l
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1786,16 +1786,16 @@ TEST(connection_impl_stop, exception_from_disconnected_callback_caught_and_logge
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1814,9 +1814,9 @@ TEST(connection_impl_stop, transport_error_invokes_disconnected_callback)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
@@ -1881,16 +1881,16 @@ TEST(connection_impl_config, custom_headers_set_in_requests)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1915,9 +1915,9 @@ TEST(connection_impl_change_state, change_state_logs)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
     mre.get();
 
     auto log_entries = std::dynamic_pointer_cast<memory_log_writer>(writer)->get_log_entries();
@@ -1943,9 +1943,9 @@ TEST(connection_id, connection_id_is_set_if_start_fails_but_negotiate_request_su
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     try
     {
@@ -1970,17 +1970,17 @@ TEST(connection_id, can_get_connection_id_when_connection_in_connected_state)
     std::string connection_id;
     auto mre = manual_reset_event<void>();
     connection->start([&mre, &connection_id, connection](std::exception_ptr exception)
-        {
-            connection_id = connection->get_connection_id();
-            mre.set(std::move(exception));
-        });
+    {
+        connection_id = connection->get_connection_id();
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -1996,16 +1996,16 @@ TEST(connection_id, can_get_connection_id_after_connection_has_stopped)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -2051,16 +2051,16 @@ TEST(connection_id, connection_id_reset_when_starting_connection)
 
     auto mre = manual_reset_event<void>();
     connection->start([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        });
+    {
+        mre.set(std::move(exception));
+    });
 
     mre.get();
 
     connection->stop([&mre](std::exception_ptr exception)
-        {
-            mre.set(std::move(exception));
-        }, nullptr);
+    {
+        mre.set(std::move(exception));
+    }, nullptr);
 
     mre.get();
 
@@ -2069,9 +2069,9 @@ TEST(connection_id, connection_id_reset_when_starting_connection)
     fail_http_requests = true;
 
     connection->start([&mre](std::exception_ptr)
-        {
-            mre.set();
-        });
+    {
+        mre.set();
+    });
 
     mre.get();
 
@@ -2116,17 +2116,17 @@ TEST(connection_impl_stop, triggers_http_send_token)
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
-        {
-            start_mre.set(std::move(exception));
-        });
+    {
+        start_mre.set(std::move(exception));
+    });
 
     send_started.get();
 
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
-        {
-            stop_mre.set(std::move(exception));
-        }, nullptr);
+    {
+        stop_mre.set(std::move(exception));
+    }, nullptr);
 
     try
     {
@@ -2181,17 +2181,17 @@ TEST(connection_impl_stop, http_client_throws_from_registered_token)
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
-        {
-            start_mre.set(std::move(exception));
-        });
+    {
+        start_mre.set(std::move(exception));
+    });
 
     send_started.get();
 
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
-        {
-            stop_mre.set(std::move(exception));
-        }, nullptr);
+    {
+        stop_mre.set(std::move(exception));
+    }, nullptr);
 
     try
     {
@@ -2224,7 +2224,7 @@ public:
     {
     }
 
-    virtual void start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) noexcept
     {
         callback(nullptr);
     }
@@ -2275,17 +2275,17 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client_w
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
-        {
-            start_mre.set(std::move(exception));
-        });
+    {
+        start_mre.set(std::move(exception));
+    });
 
     start_mre.get();
 
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
-        {
-            stop_mre.set(std::move(exception));
-        }, nullptr);
+    {
+        stop_mre.set(std::move(exception));
+    }, nullptr);
 
     try
     {
@@ -2313,17 +2313,17 @@ TEST(connection_impl_stop, works_with_stop_callback_capturing_websocket_client)
 
     auto start_mre = manual_reset_event<void>();
     connection->start([&start_mre](std::exception_ptr exception)
-        {
-            start_mre.set(std::move(exception));
-        });
+    {
+        start_mre.set(std::move(exception));
+    });
 
     start_mre.get();
 
     auto stop_mre = manual_reset_event<void>();
     connection->stop([&stop_mre](std::exception_ptr exception)
-        {
-            stop_mre.set(std::move(exception));
-        }, nullptr);
+    {
+        stop_mre.set(std::move(exception));
+    }, nullptr);
 
     stop_mre.get();
 

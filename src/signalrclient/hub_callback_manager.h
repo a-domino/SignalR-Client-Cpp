@@ -12,25 +12,26 @@
 
 namespace signalr
 {
-    class callback_manager
+    class hub_callback_manager
     {
     public:
-        explicit callback_manager(const char* dtor_error);
-        ~callback_manager();
+        explicit hub_callback_manager(const char* dtor_error);
+        ~hub_callback_manager();
 
-        callback_manager(const callback_manager&) = delete;
-        callback_manager& operator=(const callback_manager&) = delete;
+        hub_callback_manager(const hub_callback_manager&) = delete;
+        hub_callback_manager& operator=(const hub_callback_manager&) = delete;
 
         std::string register_complete_callback(const std::function<void(const char*, value&&)>& callback);
         std::string register_stream_callbacks(
             const std::function<void(value&&)>& stream_item_callback,
             const std::function<void(const char*, value&&)>& complete_callback
         );
-        bool handle_stream_item_callback(const std::string& callback_id, value&& item) const;
+        bool handle_stream_item_callback(const std::string& invocation_id, value&& item) const;
+        bool has_complete_callback_for(const std::string& invocation_id) const;
         bool invoke_complete_callback(
-            const std::string& callback_id, const char* error, value&& arguments, bool remove_callback
+            const std::string& invocation_id, const char* error, value&& result, bool remove_callback
         );
-        bool remove_complete_callback(const std::string& callback_id);
+        bool remove_complete_callback(const std::string& invocation_id);
         void clear(const char* error);
 
     private:
@@ -40,6 +41,6 @@ namespace signalr
         mutable std::mutex m_map_lock;
         std::string m_dtor_clear_arguments;
 
-        std::string get_callback_id();
+        std::string get_invocation_id();
     };
 }

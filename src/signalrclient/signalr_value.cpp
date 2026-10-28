@@ -11,7 +11,7 @@
 
 namespace signalr
 {
-    std::string value_type_to_string(value_type v)
+    static std::string value_type_to_string(value_type v)
     {
         switch (v)
         {
@@ -30,7 +30,7 @@ namespace signalr
         case signalr::value_type::binary:
             return "binary";
         default:
-            return std::to_string((int)v);
+            return std::to_string(static_cast<int>(v));
         }
     }
 
@@ -157,7 +157,7 @@ namespace signalr
 
     value::value(value&& rhs) noexcept
     {
-        mType = std::move(rhs.mType);
+        mType = rhs.mType;
         switch (mType)
         {
         case value_type::array:
@@ -167,10 +167,10 @@ namespace signalr
             new (&mStorage.string) std::string(std::move(rhs.mStorage.string));
             break;
         case value_type::float64:
-            mStorage.number = std::move(rhs.mStorage.number);
+            mStorage.number = rhs.mStorage.number;
             break;
         case value_type::boolean:
-            mStorage.boolean = std::move(rhs.mStorage.boolean);
+            mStorage.boolean = rhs.mStorage.boolean;
             break;
         case value_type::map:
             new (&mStorage.map) std::map<std::string, signalr::value>(std::move(rhs.mStorage.map));
@@ -250,7 +250,7 @@ namespace signalr
     {
         destruct_internals();
 
-        mType = std::move(rhs.mType);
+        mType = rhs.mType;
         switch (mType)
         {
         case value_type::array:
@@ -260,10 +260,10 @@ namespace signalr
             new (&mStorage.string) std::string(std::move(rhs.mStorage.string));
             break;
         case value_type::float64:
-            mStorage.number = std::move(rhs.mStorage.number);
+            mStorage.number = rhs.mStorage.number;
             break;
         case value_type::boolean:
-            mStorage.boolean = std::move(rhs.mStorage.boolean);
+            mStorage.boolean = rhs.mStorage.boolean;
             break;
         case value_type::map:
             new (&mStorage.map) std::map<std::string, value>(std::move(rhs.mStorage.map));
@@ -377,40 +377,6 @@ namespace signalr
     value_type value::type() const
     {
         return mType;
-    }
-
-    template <typename K, typename V>
-    static void displayMap(std::ostream& os, const std::map<K, V>& m) {
-        os << "{";
-
-        bool first = true;
-        for (const auto& [key, value] : m) {
-            if (!first) {
-                os << ", ";
-            }
-
-            os << key << ": " << value;
-            first = false;
-        }
-
-        os << "}";
-    }
-
-
-    template <typename V>
-    static void displayVector(std::ostream& os, const std::vector<V>& v) {
-        os << "[";
-
-        bool first = true;
-        for (const auto& value : v) {
-            if (!first) {
-                os << ", ";
-            }
-            os << value;
-            first = false;
-        }
-
-        os << "]";
     }
 
 

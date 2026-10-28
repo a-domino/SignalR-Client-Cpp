@@ -1,5 +1,5 @@
 set (SOURCES
-  callback_manager.cpp
+  hub_callback_manager.cpp
   cancellation_token.cpp
   cancellation_token_source.cpp
   connection_impl.cpp

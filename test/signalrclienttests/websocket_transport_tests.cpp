@@ -466,9 +466,9 @@ void receive_loop_logs_exception_runner(const T& e, const std::string& expected_
 
     auto close_mre = manual_reset_event<void>();
     ws_transport->on_close([&close_mre](std::exception_ptr exception)
-        {
-            close_mre.set(exception);
-        });
+    {
+        close_mre.set(exception);
+    });
 
     client->receive_message(std::make_exception_ptr(e));
 
@@ -596,7 +596,7 @@ TEST(websocket_transport_get_transport_type, get_transport_type_returns_websocke
 class throwing_websocket_client : public websocket_client
 {
 public:
-    virtual void start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) noexcept
     {
         callback(nullptr);
     }
@@ -644,10 +644,10 @@ TEST(stop, error_from_receive_on_stop_properly_closes)
     std::atomic_int on_close_called{ 0 };
     auto mre = manual_reset_event<void>();
     ws_transport->on_close([&mre, &on_close_called](std::exception_ptr ex)
-        {
-            on_close_called++;
-            mre.set(ex);
-        });
+    {
+        on_close_called++;
+        mre.set(ex);
+    });
     ws_transport->start("ws://fakeuri.org", [](std::exception_ptr) {});
     auto stop_mre = manual_reset_event<void>();
     ws_transport->stop([&stop_mre, &stop_called](std::exception_ptr ex)
@@ -664,7 +664,7 @@ TEST(stop, error_from_receive_on_stop_properly_closes)
 class caching_websocket_client : public websocket_client
 {
 public:
-    virtual void start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept
+    virtual void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) noexcept
     {
         m_start_callback = callback;
         callback(nullptr);

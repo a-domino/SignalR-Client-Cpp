@@ -142,15 +142,15 @@ namespace signalr
 
     class message_handler {
     public:
-        virtual void handle_invocation_message(invocation_message&& invocation_message) = 0;
-        virtual void handle_stream_item_message(stream_item_message&& stream_item_message) = 0;
-        virtual void handle_completion_message(completion_message&& completion_message) = 0;
-        virtual void handle_stream_invocation_message(stream_invocation_message&& stream_invocation_message) = 0;
-        virtual void handle_cancel_invocation_message(cancel_invocation_message&& cancel_invocation_message) = 0;
-        virtual void handle_ping_message(ping_message&& ping_message) = 0;
-        virtual void handle_close_message(close_message&& close_message) = 0;
-        virtual void handle_ack_message(ack_message&& ack_message) = 0;
-        virtual void handle_sequence_message(sequence_message&& sequence_message) = 0;
+        virtual void handle_invocation_message(invocation_message&& invocation_message) noexcept = 0;
+        virtual void handle_stream_item_message(stream_item_message&& stream_item_message) noexcept = 0;
+        virtual void handle_completion_message(completion_message&& completion_message) noexcept = 0;
+        virtual void handle_stream_invocation_message(stream_invocation_message&& stream_invocation_message) noexcept = 0;
+        virtual void handle_cancel_invocation_message(cancel_invocation_message&& cancel_invocation_message) noexcept = 0;
+        virtual void handle_ping_message(ping_message&& ping_message) noexcept = 0;
+        virtual void handle_close_message(close_message&& close_message) noexcept = 0;
+        virtual void handle_ack_message(ack_message&& ack_message) noexcept = 0;
+        virtual void handle_sequence_message(sequence_message&& sequence_message) noexcept = 0;
         virtual ~message_handler() = default;
     };
 

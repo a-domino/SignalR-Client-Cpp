@@ -2,39 +2,39 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-#include "callback_manager.h"
+#include "hub_callback_manager.h"
 
 namespace signalr
 {
     // dtor_clear_arguments will be passed when closing any pending callbacks when the `callback_manager` is
     // destroyed (i.e. in the dtor)
-    callback_manager::callback_manager(const char* dtor_clear_arguments)
+    hub_callback_manager::hub_callback_manager(const char* dtor_clear_arguments)
         : m_dtor_clear_arguments(dtor_clear_arguments)
     { }
 
-    callback_manager::~callback_manager()
+    hub_callback_manager::~hub_callback_manager()
     {
         clear(m_dtor_clear_arguments.data());
     }
 
     // note: callback must not throw except for the `on_progress` callback which will never be invoked from the dtor
-    std::string callback_manager::register_complete_callback(
+    std::string hub_callback_manager::register_complete_callback(
         const std::function<void(const char* err_msg, value&&)>& callback
     )
     {
-        auto callback_id = std::move(get_callback_id());
+        auto invocation_id = std::move(get_invocation_id());
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
-            m_complete_callbacks.insert(std::make_pair(callback_id, callback));
+            m_complete_callbacks.insert(std::make_pair(invocation_id, callback));
         }
-        return std::move(callback_id);
+        return std::move(invocation_id);
     }
 
-    std::string callback_manager::register_stream_callbacks(
+    std::string hub_callback_manager::register_stream_callbacks(
         const std::function<void(value&&)>& stream_item_callback,
         const std::function<void(const char*, value&&)>& complete_callback
     ) {
-        auto callback_id = std::move(get_callback_id());
+        auto callback_id = std::move(get_invocation_id());
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
             m_handle_item_callbacks.insert(std::make_pair(callback_id, stream_item_callback));
@@ -43,13 +43,13 @@ namespace signalr
         return std::move(callback_id);
     }
 
-    bool callback_manager::handle_stream_item_callback(const std::string& callback_id, value&& item) const {
+    bool hub_callback_manager::handle_stream_item_callback(const std::string& invocation_id, value&& item) const {
         std::function<void(value&&)> callback;
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            const auto iter = m_handle_item_callbacks.find(callback_id);
-            if (iter == m_handle_item_callbacks.end())
+            const auto iter = m_handle_item_callbacks.find(invocation_id);
+            if (iter == m_handle_item_callbacks.cend())
             {
                 return false;
             }
@@ -60,18 +60,21 @@ namespace signalr
         return true;
     }
 
-    // invokes a callback and stops tracking it if remove callback set to true
-    bool callback_manager::invoke_complete_callback(
-        const std::string& callback_id, const char* error, signalr::value&& arguments, bool remove_callback
-    )
-    {
-        std::function<void(const char*, signalr::value&& arguments)> callback;
+    bool hub_callback_manager::has_complete_callback_for(const std::string& invocation_id) const {
+        std::lock_guard<std::mutex> lock(m_map_lock);
+        return m_complete_callbacks.find(invocation_id) != m_complete_callbacks.cend();
+    }
 
+    // invokes a callback and stops tracking it if remove callback set to true
+    bool hub_callback_manager::invoke_complete_callback(
+        const std::string& invocation_id, const char* error, signalr::value&& result, const bool remove_callback
+    ) {
+        std::function<void(const char*, signalr::value&& result)> callback;
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
 
-            const auto iter = m_complete_callbacks.find(callback_id);
-            if (iter == m_complete_callbacks.end())
+            const auto iter = m_complete_callbacks.find(invocation_id);
+            if (iter == m_complete_callbacks.cend())
             {
                 return false;
             }
@@ -80,25 +83,24 @@ namespace signalr
 
             if (remove_callback)
             {
-                m_handle_item_callbacks.erase(callback_id);
-                m_complete_callbacks.erase(callback_id);
+                m_handle_item_callbacks.erase(invocation_id);
+                m_complete_callbacks.erase(invocation_id);
             }
         }
-
-        callback(error, std::move(arguments));
+        callback(error, std::move(result));
         return true;
     }
 
-    bool callback_manager::remove_complete_callback(const std::string& callback_id)
+    bool hub_callback_manager::remove_complete_callback(const std::string& invocation_id)
     {
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
-            m_handle_item_callbacks.erase(callback_id);
-            return m_complete_callbacks.erase(callback_id) != 0;
+            m_handle_item_callbacks.erase(invocation_id);
+            return m_complete_callbacks.erase(invocation_id) != 0;
         }
     }
 
-    void callback_manager::clear(const char* error)
+    void hub_callback_manager::clear(const char* error)
     {
         std::unordered_map<std::string, std::function<void(const char*, signalr::value&&)>> complete_callbacks;
         {
@@ -112,7 +114,7 @@ namespace signalr
         }
     }
 
-    std::string callback_manager::get_callback_id()
+    std::string hub_callback_manager::get_invocation_id()
     {
         return std::move(std::to_string(m_id++));
     }

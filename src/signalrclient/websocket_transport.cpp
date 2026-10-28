@@ -28,10 +28,10 @@ namespace signalr
 
     websocket_transport::websocket_transport(
         const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
-        signalr_client_config  signalr_client_config, const logger& logger
+        signalr_client_config signalr_client_config, const logger& logger
     ) : transport(logger)
       , m_websocket_client_factory(websocket_client_factory)
-      , m_process_response_callback([](std::string, std::exception_ptr) {})
+      , m_process_response_callback([](const std::string&, const std::exception_ptr&) {})
       , m_close_callback([](const std::exception_ptr&) {})
       , m_signalr_client_config(std::move(signalr_client_config))
       , m_disconnected(true), m_receive_loop_task(std::make_shared<cancellation_token_source>())
@@ -45,7 +45,7 @@ namespace signalr
     {
         try
         {
-            std::shared_ptr<std::promise<void>> promise = std::make_shared<std::promise<void>>();
+            auto promise = std::make_shared<std::promise<void>>();
             websocket_transport::stop([promise](const std::exception_ptr&) { promise->set_value(); });
             promise->get_future().get();
         }
@@ -63,16 +63,17 @@ namespace signalr
     // can be fired on different threads in which case we will have to lock before setting groups token and message id.
     void websocket_transport::receive_loop()
     {
-        auto this_transport = shared_from_this();
+        const auto this_transport = shared_from_this();
         auto logger = this_transport->m_logger;
 
-        // Passing the `std::weak_ptr<websocket_transport>` prevents from a memory leak where we would capture the shared_ptr to
-        // the transport in the continuation lambda and as a result as long as the loop runs the ref count would never get to
-        // zero. Now we capture the weak pointer and get the shared pointer only when the continuation runs so the ref count is
-        // incremented when the shared pointer is acquired and then decremented when it goes out of scope of the continuation.
+        // Passing the `std::weak_ptr<websocket_transport>` prevents from a memory leak where we would capture the
+        // shared_ptr to the transport in the continuation lambda and as a result as long as the loop runs the ref count
+        // would never get to zero. Now we capture the weak pointer and get the shared pointer only when the
+        // continuation runs so the ref count is incremented when the shared pointer is acquired and then decremented
+        // when it goes out of scope of the continuation.
         auto weak_transport = std::weak_ptr<websocket_transport>(this_transport);
 
-        auto websocket_client = this_transport->safe_get_websocket_client();
+        const auto websocket_client = this_transport->safe_get_websocket_client();
         auto weak_websocket_client = std::weak_ptr<signalr::websocket_client>(websocket_client);
         auto receive_loop_task = m_receive_loop_task;
 
@@ -86,7 +87,8 @@ namespace signalr
             {
                 const auto transport = weak_transport.lock();
 
-                // transport can be null if a websocket transport specific test doesn't call and wait for stop and relies on the destructor, if that happens update the test to call and wait for stop.
+                // transport can be null if a websocket transport specific test doesn't call and wait for stop and
+                // relies on the destructor, if that happens update the test to call and wait for stop.
                 // stop waits for the receive loop to complete so the transport should never be null
                 assert(transport != nullptr);
 
@@ -127,8 +129,10 @@ namespace signalr
                     {
                         std::lock_guard<std::mutex> lock(transport->m_start_stop_lock);
                         disconnected = transport->m_disconnected;
-                        // prevent transport.stop() from doing anything, we'll handle the close logic here (we can't guarantee the close callback will only be called once otherwise)
-                        // this could happen if there was a transport error at the same time someone called stop on the connection
+                        // prevent transport.stop() from doing anything, we'll handle the close logic here (we can't
+                        // guarantee the close callback will only be called once otherwise)
+                        // this could happen if there was a transport error at the same time someone called stop on the
+                        // connection
                         transport->m_disconnected = true;
                     }
                     if (disconnected)
@@ -140,17 +144,22 @@ namespace signalr
                     receive_loop_task->cancel();
 
                     std::promise<void> promise;
-                    auto client = weak_websocket_client.lock();
+                    const auto client = weak_websocket_client.lock();
                     if (!client)
                     {
                         // this should not be hit
-                        // we wait for the receive loop to complete before completing stop (which will then destruct the transport and client)
-                        logger.log(trace_level::critical,
-                            "[websocket transport] websocket client has been destructed before the receive loop completes, this is a bug");
+                        // we wait for the receive loop to complete before completing stop (which will then destruct the
+                        // transport and client)
+                        logger.log(
+                            trace_level::critical,
+                            "[websocket transport] websocket client has been destructed before the receive loop"
+                            " completes, this is a bug"
+                        );
                         assert(client != nullptr);
                     }
 
-                    // because transport.stop won't be called we need to stop the underlying client and invoke the transports close callback
+                    // because transport.stop won't be called we need to stop the underlying client and invoke the
+                    // transports close callback
                     client->stop([&promise](std::exception_ptr ex_ptr)
                     {
                         if (ex_ptr != nullptr)
@@ -206,9 +215,10 @@ namespace signalr
         }
     }
 
-    void websocket_transport::start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept
-    {
-        signalr::uri uri(url);
+    void websocket_transport::start(
+        const std::string& url, const std::function<void(const std::exception_ptr&)>& callback
+    ) noexcept {
+        const signalr::uri uri(url);
         assert(uri.scheme() == "ws" || uri.scheme() == "wss");
 
         {
@@ -224,7 +234,7 @@ namespace signalr
                 std::string("[websocket transport] connecting to: ")
                 .append(url));
 
-            auto websocket_client = m_websocket_client_factory(m_signalr_client_config);
+            const auto websocket_client = m_websocket_client_factory(m_signalr_client_config);
 
             {
                 std::lock_guard<std::mutex> client_lock(m_websocket_client_lock);
@@ -237,44 +247,44 @@ namespace signalr
             auto weak_transport = std::weak_ptr<websocket_transport>(shared_from_this());
 
             websocket_client->start(url, [weak_transport, callback](std::exception_ptr ex_ptr)
+            {
+                const auto transport = weak_transport.lock();
+                if (!transport)
                 {
-                    auto transport = weak_transport.lock();
-                    if (!transport)
+                    callback(std::make_exception_ptr(signalr_exception("transport no longer exists")));
+                    return;
+                }
+
+                try
+                {
+                    if (ex_ptr != nullptr)
                     {
-                        callback(std::make_exception_ptr(signalr_exception("transport no longer exists")));
-                        return;
+                        std::rethrow_exception(std::move(ex_ptr));
                     }
 
-                    try
+                    if (transport->m_disconnected)
                     {
-                        if (ex_ptr != nullptr)
-                        {
-                            std::rethrow_exception(std::move(ex_ptr));
-                        }
-
-                        if (transport->m_disconnected)
-                        {
-                            throw signalr::canceled_exception();
-                        }
-
-                        transport->receive_loop();
-                        callback(nullptr);
+                        throw signalr::canceled_exception();
                     }
-                    catch (const std::exception & e)
-                    {
-                        transport->m_logger.log(
-                            trace_level::error,
-                            std::string("[websocket transport] exception when connecting to the server: ")
-                            .append(e.what()));
 
-                        transport->m_disconnected = true;
-                        callback(std::current_exception());
-                    }
-                });
+                    transport->receive_loop();
+                    callback(nullptr);
+                }
+                catch (const std::exception & e)
+                {
+                    transport->m_logger.log(
+                        trace_level::error,
+                        std::string("[websocket transport] exception when connecting to the server: ")
+                        .append(e.what()));
+
+                    transport->m_disconnected = true;
+                    callback(std::current_exception());
+                }
+            });
         }
     }
 
-    void websocket_transport::stop(const std::function<void(std::exception_ptr)>& callback) noexcept
+    void websocket_transport::stop(const std::function<void(const std::exception_ptr&)>& callback) noexcept
     {
         std::shared_ptr<websocket_client> websocket_client = nullptr;
 
@@ -298,7 +308,8 @@ namespace signalr
 
         m_logger.log(trace_level::debug, "stopping websocket transport");
 
-        websocket_client->stop([logger, callback, close_callback, receive_loop_task](const std::exception_ptr& ex_ptr)
+        websocket_client->stop(
+            [logger, callback, close_callback, receive_loop_task](const std::exception_ptr& ex_ptr)
             {
                 receive_loop_task->register_callback([logger, callback, close_callback, ex_ptr]()
                     {
@@ -330,31 +341,34 @@ namespace signalr
         );
     }
 
-    void websocket_transport::on_close(std::function<void(std::exception_ptr)> callback)
+    void websocket_transport::on_close(const std::function<void(const std::exception_ptr&)>& callback)
     {
         m_close_callback = callback;
     }
 
-    void websocket_transport::on_receive(std::function<void(std::string&&, std::exception_ptr)> callback)
+    void websocket_transport::on_receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback)
     {
         m_process_response_callback = callback;
     }
 
     void websocket_transport::send(
         const std::string& payload, const transfer_format transfer_format,
-        const std::function<void(std::exception_ptr)>& callback
+        const std::function<void(const std::exception_ptr&)>& callback
     ) noexcept
     {
-        safe_get_websocket_client()->send(payload, transfer_format, [callback](const std::exception_ptr& exception)
-        {
-            if (exception != nullptr)
+        safe_get_websocket_client()->send(
+            payload, transfer_format,
+            [callback](const std::exception_ptr& exception)
             {
-                callback(exception);
+                if (exception != nullptr)
+                {
+                    callback(exception);
+                }
+                else
+                {
+                    callback(nullptr);
+                }
             }
-            else
-            {
-                callback(nullptr);
-            }
-        });
+        );
     }
 }

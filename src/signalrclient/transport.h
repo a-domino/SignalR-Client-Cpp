@@ -17,19 +17,21 @@ namespace signalr
 
         virtual ~transport();
 
-        virtual void start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept = 0;
-        virtual void stop(const std::function<void(std::exception_ptr)>& callback) noexcept = 0;
-        virtual void on_close(std::function<void(std::exception_ptr)> callback) = 0;
+        virtual void start(
+            const std::string& url, const std::function<void(const std::exception_ptr&)>& callback
+        ) noexcept = 0;
+        virtual void stop(const std::function<void(const std::exception_ptr&)>& callback) noexcept = 0;
+        virtual void on_close(const std::function<void(const std::exception_ptr&)>& callback) = 0;
 
         virtual void send(
             const std::string& payload, signalr::transfer_format transfer_format,
-            const std::function<void(std::exception_ptr)>& callback
+            const std::function<void(const std::exception_ptr&)>& callback
         ) noexcept = 0;
 
-        virtual void on_receive(std::function<void(std::string&&, std::exception_ptr)> callback) = 0;
+        virtual void on_receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback) = 0;
 
     protected:
-        transport(const logger& logger);
+        explicit transport(const logger& logger);
 
         logger m_logger;
     };

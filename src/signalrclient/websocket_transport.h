@@ -14,10 +14,12 @@ namespace signalr
     class websocket_transport : public transport, public std::enable_shared_from_this<websocket_transport>
     {
     public:
-        static std::shared_ptr<transport> create(const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
-            const signalr_client_config& signalr_client_config, const logger& logger);
+        static std::shared_ptr<transport> create(
+            const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
+            const signalr_client_config& signalr_client_config, const logger& logger
+        );
 
-        ~websocket_transport();
+        ~websocket_transport() override;
 
         websocket_transport(const websocket_transport&) = delete;
 
@@ -25,24 +27,31 @@ namespace signalr
 
         transport_type get_transport_type() const noexcept override;
 
-        void start(const std::string& url, std::function<void(std::exception_ptr)> callback) noexcept override;
-        void stop(const std::function<void(std::exception_ptr)>& callback) noexcept override;
-        void on_close(std::function<void(std::exception_ptr)> callback) override;
+        void start(
+            const std::string& url, const std::function<void(const std::exception_ptr&)>& callback
+        ) noexcept override;
+        void stop(const std::function<void(const std::exception_ptr&)>& callback) noexcept override;
+        void on_close(const std::function<void(const std::exception_ptr&)>& callback) override;
 
-        void send(const std::string& payload, transfer_format transfer_format, const std::function<void(std::exception_ptr)>& callback) noexcept override;
+        void send(
+            const std::string& payload, transfer_format transfer_format,
+            const std::function<void(const std::exception_ptr&)>& callback
+        ) noexcept override;
 
-        void on_receive(std::function<void(std::string&&, std::exception_ptr)>) override;
+        void on_receive(const std::function<void(std::string&&, const std::exception_ptr&)>&) override;
 
     private:
-        websocket_transport(const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
-            signalr_client_config  signalr_client_config, const logger& logger);
+        websocket_transport(
+            const std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)>& websocket_client_factory,
+            signalr_client_config  signalr_client_config, const logger& logger
+        );
 
         std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> m_websocket_client_factory;
         std::shared_ptr<websocket_client> m_websocket_client;
         std::mutex m_websocket_client_lock;
         std::mutex m_start_stop_lock;
-        std::function<void(std::string&&, std::exception_ptr)> m_process_response_callback;
-        std::function<void(std::exception_ptr)> m_close_callback;
+        std::function<void(std::string&&, const std::exception_ptr&)> m_process_response_callback;
+        std::function<void(const std::exception_ptr&)> m_close_callback;
         signalr_client_config m_signalr_client_config;
 
         bool m_disconnected;

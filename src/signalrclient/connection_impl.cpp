@@ -47,7 +47,7 @@ namespace signalr
       , m_transport(nullptr)
       , m_skip_negotiation(skip_negotiation)
       , m_message_received([](const std::string&) noexcept {})
-      , m_disconnected([](std::exception_ptr) noexcept {})
+      , m_disconnected([](const std::exception_ptr&) noexcept {})
       , m_disconnect_cts(std::make_shared<cancellation_token_source>())
     {
         if (http_client_factory != nullptr)
@@ -75,44 +75,46 @@ namespace signalr
             {
                 if (m_logger.is_enabled(trace_level::warning))
                 {
-                    m_logger.log(trace_level::warning, std::string("start completed event threw an exception in the destructor: ")
-                        .append(ex.what()));
+                    m_logger.logv(
+                        trace_level::warning,
+                        "start completed event threw an exception in the destructor: ", ex.what()
+                    );
                 }
             }
             completion_event completion;
             auto logger = m_logger;
             logger.log(signalr::trace_level::verbose, "calling shutdown() from the dtor");
-            shutdown([completion, logger](std::exception_ptr exception) mutable
+            shutdown([completion, logger](const std::exception_ptr& exception) mutable
+            {
+                if (exception != nullptr)
                 {
-                    if (exception != nullptr)
+                    // TODO: Log?
+                    try
                     {
-                        // TODO: Log?
-                        try
-                        {
-                            std::rethrow_exception(exception);
-                        }
-                        catch (const std::exception& e)
-                        {
-                            if (logger.is_enabled(trace_level::error))
-                            {
-                                logger.log(
-                                    trace_level::error,
-                                    std::string("shutdown threw an exception: ").append(e.what())
-                                );
-                            }
-                        }
-                        catch (...)
+                        std::rethrow_exception(exception);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        if (logger.is_enabled(trace_level::error))
                         {
                             logger.log(
                                 trace_level::error,
-                                "shutdown threw an unknown exception."
+                                std::string("shutdown threw an exception: ").append(e.what())
                             );
                         }
                     }
+                    catch (...)
+                    {
+                        logger.log(
+                            trace_level::error,
+                            "shutdown threw an unknown exception."
+                        );
+                    }
+                }
 
-                    // make sure this is last as it will unblock the destructor
-                    completion.set();
-                }, /* is_dtor */ true);
+                // make sure this is last as it will unblock the destructor
+                completion.set();
+            }, /* is_dtor */ true);
 
             completion.get();
         }
@@ -123,35 +125,43 @@ namespace signalr
         change_state(connection_state::disconnected);
     }
 
-    struct callback_on_destruct
-    {
-        callback_on_destruct(std::function<void()> func)
+    namespace {
+        struct callback_on_destruct
         {
-            mFunc = func;
-        }
+            explicit callback_on_destruct(const std::function<void()>& func)
+            {
+                m_func = func;
+            }
 
-        ~callback_on_destruct()
-        {
-            mFunc();
-        }
-    private:
-        std::function<void()> mFunc;
-    };
+            ~callback_on_destruct()
+            {
+                m_func();
+            }
+        private:
+            std::function<void()> m_func;
+        };
+    }
 
-    void connection_impl::start(std::function<void(std::exception_ptr)> callback) noexcept
+    void connection_impl::start(const std::function<void(const std::exception_ptr&)>& callback) noexcept
     {
         {
             std::lock_guard<std::mutex> lock(m_stop_lock);
             m_logger.log(trace_level::verbose, "acquired lock in start()");
             auto logger = m_logger;
-            auto _ = callback_on_destruct([logger]()
+            auto _ = callback_on_destruct(
+                [logger]
                 {
                     logger.log(trace_level::verbose, "released lock in start()");
-                });
+                }
+            );
 
             if (!change_state(connection_state::disconnected, connection_state::connecting))
             {
-                callback(std::make_exception_ptr(signalr_exception("cannot start a connection that is not in the disconnected state")));
+                callback(
+                    std::make_exception_ptr(
+                        signalr_exception("cannot start a connection that is not in the disconnected state")
+                    )
+                );
                 return;
             }
 
@@ -173,73 +183,126 @@ namespace signalr
         start_negotiate(m_base_url, callback);
     }
 
-    void connection_impl::start_negotiate(const std::string& url, std::function<void(std::exception_ptr)> callback)
-    {
+    void connection_impl::start_negotiate(
+        const std::string& url, const std::function<void(const std::exception_ptr&)>& callback
+    ) {
         std::weak_ptr<connection_impl> weak_connection = shared_from_this();
         const auto token = m_disconnect_cts;
 
-        std::shared_ptr<bool> connect_request_done = std::make_shared<bool>();
-        std::shared_ptr<std::mutex> connect_request_lock = std::make_shared<std::mutex>();
+        auto connect_request_done = std::make_shared<bool>();
+        auto connect_request_lock = std::make_shared<std::mutex>();
 
-        const auto transport_started = [weak_connection, connect_request_done, connect_request_lock, callback, token]
-        (std::shared_ptr<transport> transport, std::exception_ptr exception)
-        {
+        const auto transport_started =
+            [weak_connection, connect_request_done, connect_request_lock, callback, token]
+            (const std::shared_ptr<transport>& transport, const std::exception_ptr& exception)
             {
-                std::lock_guard<std::mutex> lock(*connect_request_lock);
-                // no op after connection started/stopped successfully
-                if (*connect_request_done == false)
                 {
-                    *connect_request_done = true;
-                }
-                else
-                {
-                    // transport has a value only when we successfully called start on the transport
-                    if (transport)
+                    std::lock_guard<std::mutex> lock(*connect_request_lock);
+                    // no op after connection started/stopped successfully
+                    if (*connect_request_done == false)
                     {
-                        // when we get here that means the connection was stopped during/after the transport started.
-                        // We need to stop the transport here because no one else is referencing it
-
-                        // Capture the transport in the lambda to prevent the shared_ptr from deleting the transport object until we finished stopping it
-                        transport->stop([transport](std::exception_ptr) {});
+                        *connect_request_done = true;
                     }
+                    else
+                    {
+                        // transport has a value only when we successfully called start on the transport
+                        if (transport)
+                        {
+                            // when we get here that means the connection was stopped during/after the transport started
+                            // We need to stop the transport here because no one else is referencing it
+
+                            // Capture the transport in the lambda to prevent the shared_ptr from deleting the transport
+                            // object until we finished stopping it
+                            transport->stop([transport](const std::exception_ptr&) {});
+                        }
+                        return;
+                    }
+                }
+
+                auto connection = weak_connection.lock();
+                if (!connection)
+                {
+                    callback(std::make_exception_ptr(signalr_exception("connection no longer exists")));
                     return;
                 }
-            }
 
-            auto connection = weak_connection.lock();
-            if (!connection)
-            {
-                callback(std::make_exception_ptr(signalr_exception("connection no longer exists")));
-                return;
-            }
+                try
+                {
+                    if (exception != nullptr)
+                    {
+                        std::rethrow_exception(exception);
+                    }
+                    token->throw_if_cancellation_requested();
+                }
+                catch (const std::exception& e)
+                {
+                    if (token->is_canceled())
+                    {
+                        connection->m_logger.log(
+                            trace_level::info, "starting the connection has been canceled by stop()."
+                        );
+                    }
+                    else
+                    {
+                        if (connection->m_logger.is_enabled(trace_level::error))
+                        {
+                            connection->m_logger.log(
+                                trace_level::error,
+                                std::string("connection could not be started due to: ").append(e.what())
+                            );
+                        }
+                    }
 
-            try
-            {
-                if (exception != nullptr)
-                {
-                    std::rethrow_exception(exception);
+                    connection->m_transport = nullptr;
+                    connection->change_state(connection_state::disconnected);
+                    try
+                    {
+                        connection->m_start_completed_event.cancel();
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        if (connection->m_logger.is_enabled(trace_level::warning))
+                        {
+                            connection->m_logger.logv(
+                                trace_level::warning,
+                                "start completed event threw an exception in start negotiate: ", ex.what()
+                            );
+                        }
+                    }
+                    try
+                    {
+                        connection->m_disconnect_cts->cancel();
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        if (connection->m_logger.is_enabled(trace_level::warning))
+                        {
+                            connection->m_logger.logv(
+                                trace_level::warning,
+                                "disconnect event threw an exception in start negotiate: ", ex.what()
+                            );
+                        }
+                    }
+                    callback(std::current_exception());
+                    return;
                 }
-                token->throw_if_cancellation_requested();
-            }
-            catch (const std::exception& e)
-            {
-                if (token->is_canceled())
-                {
-                    connection->m_logger.log(trace_level::info,
-                        "starting the connection has been canceled by stop().");
-                }
-                else
+
+                connection->m_transport = transport;
+
+                if (!connection->change_state(connection_state::connecting, connection_state::connected))
                 {
                     if (connection->m_logger.is_enabled(trace_level::error))
                     {
-                        connection->m_logger.log(trace_level::error,
-                            std::string("connection could not be started due to: ")
-                            .append(e.what()));
+                        connection->m_logger.logv(
+                            trace_level::error,
+                            "internal error - transition from an unexpected state. expected state: connecting,"
+                            " actual state: ", translate_connection_state(connection->get_connection_state())
+                        );
                     }
+
+                    assert(false);
                 }
 
-                connection->m_transport = nullptr;
-                connection->change_state(connection_state::disconnected);
                 try
                 {
                     connection->m_start_completed_event.cancel();
@@ -248,59 +311,20 @@ namespace signalr
                 {
                     if (connection->m_logger.is_enabled(trace_level::warning))
                     {
-                        connection->m_logger.log(trace_level::warning, std::string("start completed event threw an exception in start negotiate: ")
-                            .append(ex.what()));
+                        connection->m_logger.logv(
+                            trace_level::warning,
+                            "start completed event threw an exception in start negotiate: ", ex.what()
+                        );
                     }
                 }
-                try
-                {
-                    connection->m_disconnect_cts->cancel();
-                }
-                catch (const std::exception& ex)
-                {
-                    if (connection->m_logger.is_enabled(trace_level::warning))
-                    {
-                        connection->m_logger.log(trace_level::warning, std::string("disconnect event threw an exception in start negotiate: ")
-                            .append(ex.what()));
-                    }
-                }
-                callback(std::current_exception());
-                return;
-            }
-
-            connection->m_transport = transport;
-
-            if (!connection->change_state(connection_state::connecting, connection_state::connected))
-            {
-                if (connection->m_logger.is_enabled(trace_level::error))
-                {
-                    connection->m_logger.log(trace_level::error,
-                        std::string("internal error - transition from an unexpected state. expected state: connecting, actual state: ")
-                        .append(translate_connection_state(connection->get_connection_state())));
-                }
-
-                assert(false);
-            }
-
-            try
-            {
-                connection->m_start_completed_event.cancel();
-            }
-            catch (const std::exception& ex)
-            {
-                if (connection->m_logger.is_enabled(trace_level::warning))
-                {
-                    connection->m_logger.log(trace_level::warning, std::string("start completed event threw an exception in start negotiate: ")
-                        .append(ex.what()));
-                }
-            }
-            callback(nullptr);
-        };
+                callback(nullptr);
+            };
 
         m_disconnect_cts->register_callback([transport_started]()
             {
-                // The callback checks the disconnect_cts token or if callback already called and will handle it appropriately
-                // Not passing an error since the callback will create a canceled_exception since it knows the token was canceled.
+                // The callback checks the disconnect_cts token or if callback already called and will handle it
+                // appropriately. Not passing an error since the callback will create a canceled_exception since it
+                // knows the token was canceled.
                 transport_started(nullptr, nullptr);
             });
 
@@ -314,8 +338,10 @@ namespace signalr
         start_negotiate_internal(url, 0, transport_started);
     }
 
-    void connection_impl::start_negotiate_internal(const std::string& url, int redirect_count, std::function<void(std::shared_ptr<transport> transport, std::exception_ptr)> transport_started)
-    {
+    void connection_impl::start_negotiate_internal(
+        const std::string& url, int redirect_count,
+        const std::function<void(const std::shared_ptr<transport>& transport, const std::exception_ptr&)>& transport_started
+    ) {
         if (m_disconnect_cts->is_canceled())
         {
             return;
@@ -323,17 +349,20 @@ namespace signalr
 
         if (redirect_count >= MAX_NEGOTIATE_REDIRECTS)
         {
-            transport_started(nullptr, std::make_exception_ptr(signalr_exception("Negotiate redirection limit exceeded.")));
+            transport_started(
+                nullptr, std::make_exception_ptr(signalr_exception("Negotiate redirection limit exceeded."))
+            );
             return;
         }
 
         std::weak_ptr<connection_impl> weak_connection = shared_from_this();
         const auto token = m_disconnect_cts;
 
-        auto http_client = m_http_client_factory(m_signalr_client_config);
+        const auto http_client = m_http_client_factory(m_signalr_client_config);
         negotiate::negotiate(
             http_client, url, m_signalr_client_config,
-            [transport_started, weak_connection, redirect_count, token, url](negotiation_response&& response, std::exception_ptr exception)
+            [transport_started, weak_connection, redirect_count, token, url]
+            (negotiation_response&& response, const std::exception_ptr& exception)
             {
                 auto connection = weak_connection.lock();
                 if (!connection)
@@ -353,8 +382,8 @@ namespace signalr
                         if (connection->m_logger.is_enabled(trace_level::error))
                         {
                             connection->m_logger.log(trace_level::error,
-                                std::string("connection could not be started due to: ")
-                                .append(e.what()));
+                                                     std::string("connection could not be started due to: ")
+                                                     .append(e.what()));
                         }
                     }
                     transport_started(nullptr, exception);
@@ -417,14 +446,17 @@ namespace signalr
                 }
 
                 connection->start_transport(url, transport_started);
-            }, get_cancellation_token(m_disconnect_cts));
+            },
+            get_cancellation_token(m_disconnect_cts)
+        );
     }
 
     void connection_impl::start_transport(
-        const std::string& url, std::function<void(std::shared_ptr<transport>, std::exception_ptr)> transport_started
+        const std::string& url,
+        const std::function<void(const std::shared_ptr<transport>&, const std::exception_ptr&)>& transport_started_cb
     )
     {
-        auto connection = shared_from_this();
+        const auto connection = shared_from_this();
 
         auto weak_connection = std::weak_ptr<connection_impl>(connection);
         const auto disconnect_cts = m_disconnect_cts;
@@ -435,22 +467,23 @@ namespace signalr
         );
 
         transport->on_close([weak_connection](std::exception_ptr exception)
+        {
+            auto connection = weak_connection.lock();
+            if (!connection)
             {
-                auto connection = weak_connection.lock();
-                if (!connection)
-                {
-                    return;
-                }
+                return;
+            }
 
-                // close callback will only be called if start on the transport has already returned
-                // wait for the event in order to avoid a race where the state hasn't changed from connecting
-                // yet and the transport errors out
-                connection->m_start_completed_event.wait();
-                connection->stop_connection(std::move(exception));
-            });
+            // close callback will only be called if start on the transport has already returned
+            // wait for the event in order to avoid a race where the state hasn't changed from connecting
+            // yet and the transport errors out
+            connection->m_start_completed_event.wait();
+            connection->stop_connection(std::move(exception));
+        });
 
-        transport->on_receive([disconnect_cts, logger, weak_connection, transport_started]
-            (std::string&& message, std::exception_ptr exception)
+        transport->on_receive(
+            [disconnect_cts, logger, weak_connection, transport_started_cb]
+            (std::string&& message, const std::exception_ptr& exception)
             {
                 if (exception == nullptr)
                 {
@@ -500,32 +533,39 @@ namespace signalr
                         return;
                     }
 
-                    transport_started(nullptr, exception);
+                    transport_started_cb(nullptr, exception);
                 }
-            });
+            }
+        );
 
-        connection->send_connect_request(transport, url, [transport_started, transport](std::exception_ptr exception)
+        connection->send_connect_request(
+            transport, url,
+            [transport_started_cb, transport](const std::exception_ptr& exception)
             {
                 if (exception == nullptr)
                 {
-                    transport_started(transport, nullptr);
+                    transport_started_cb(transport, nullptr);
                 }
                 else
                 {
-                    transport_started(nullptr, exception);
+                    transport_started_cb(nullptr, exception);
                 }
             }
         );
     }
 
-    void connection_impl::send_connect_request(const std::shared_ptr<transport>& transport, const std::string& url, std::function<void(std::exception_ptr)> callback)
-    {
+    void connection_impl::send_connect_request(
+        const std::shared_ptr<transport>& transport, const std::string& url,
+        const std::function<void(const std::exception_ptr&)>& callback
+    ) const {
         auto logger = m_logger;
-        auto query_string = "id=" + m_connection_token;
-        auto connect_url = url_builder::build_connect(url, transport->get_transport_type(), query_string);
+        const auto query_string = "id=" + m_connection_token;
+        const auto connect_url = url_builder::build_connect(url, transport->get_transport_type(), query_string);
 
-        transport->start(connect_url, [callback, logger](std::exception_ptr exception)
-            mutable {
+        transport->start(
+            connect_url,
+            [callback, logger](const std::exception_ptr& exception) mutable
+            {
                 try
                 {
                     if (exception != nullptr)
@@ -544,9 +584,10 @@ namespace signalr
                             .append(e.what()));
                     }
 
-                    callback(exception);
+                        callback(exception);
+                    }
                 }
-            });
+            );
     }
 
     void connection_impl::process_response(std::string&& response) const {
@@ -566,8 +607,8 @@ namespace signalr
             {
                 m_logger.log(
                     trace_level::error,
-                    std::string("message_received callback threw an exception: ")
-                    .append(e.what()));
+                    std::string("message_received callback threw an exception: ").append(e.what())
+                );
             }
         }
         catch (...)
@@ -578,7 +619,7 @@ namespace signalr
 
     void connection_impl::send(
         const std::string& data, const transfer_format transfer_format,
-        const std::function<void(std::exception_ptr)>& msg_sent_callback
+        const std::function<void(const std::exception_ptr&)>& msg_sent_callback
     ) const noexcept {
         // To prevent an (unlikely) condition where the transport is nulled out after we checked the connection_state
         // and before sending data we store the pointer in the local variable. In this case `send()` will throw but
@@ -607,8 +648,8 @@ namespace signalr
 
         transport->send(
             data, transfer_format,
-            [logger, msg_sent_callback](const std::exception_ptr& exception)
-            mutable {
+            [logger, msg_sent_callback](const std::exception_ptr& exception) mutable
+            {
                 try
                 {
                     if (exception != nullptr)
@@ -630,16 +671,18 @@ namespace signalr
         );
     }
 
-    void connection_impl::stop(std::function<void(std::exception_ptr)> callback, std::exception_ptr exception) noexcept
+    void connection_impl::stop(
+        const std::function<void(const std::exception_ptr&)>& callback, std::exception_ptr exception
+    ) noexcept
     {
-        m_stop_error = exception;
+        m_stop_error = std::move(exception);
         m_logger.log(trace_level::info, "closing connection");
 
         shutdown(callback);
     }
 
     // This function is called from the dtor so you must not use `shared_from_this` here (it will throw).
-    void connection_impl::shutdown(std::function<void(std::exception_ptr)> callback, bool is_dtor)
+    void connection_impl::shutdown(const std::function<void(const std::exception_ptr&)>& callback, const bool is_dtor)
     {
         {
             std::lock_guard<std::mutex> lock(m_stop_lock);
@@ -663,8 +706,9 @@ namespace signalr
                 {
                     if (m_logger.is_enabled(trace_level::warning))
                     {
-                        m_logger.log(trace_level::warning, std::string("disconnect event threw an exception in shutdown: ")
-                            .append(ex.what()));
+                        m_logger.logv(
+                            trace_level::warning, "disconnect event threw an exception in shutdown: ", ex.what()
+                        );
                     }
                 }
                 callback(m_stop_error);
@@ -689,15 +733,19 @@ namespace signalr
             {
                 if (m_logger.is_enabled(trace_level::warning))
                 {
-                    m_logger.log(trace_level::warning, std::string("disconnect event threw an exception in shutdown: ")
-                        .append(ex.what()));
+                    m_logger.logv(
+                        trace_level::warning, "disconnect event threw an exception in shutdown: ", ex.what()
+                    );
                 }
             }
 
             while (m_start_completed_event.wait(60000) != 0)
             {
-                m_logger.log(trace_level::error,
-                    "internal error - stopping the connection is still waiting for the start operation to finish which should have already finished or timed out");
+                m_logger.log(
+                    trace_level::error,
+                    "internal error - stopping the connection is still waiting for the start operation to finish"
+                    " which should have already finished or timed out"
+                );
             }
 
             // at this point we are either in the connected or disconnected state. If we are in the disconnected state
@@ -727,14 +775,19 @@ namespace signalr
             std::lock_guard<std::mutex> lock(m_stop_lock);
             m_logger.log(trace_level::verbose, "acquired lock in stop_connection()");
             auto logger = m_logger;
-            auto _ = callback_on_destruct([logger]()
+            auto _ = callback_on_destruct(
+                [logger]()
                 {
                     logger.log(trace_level::verbose, "released lock in stop_connection()");
-                });
+                }
+            );
 
             if (m_connection_state == connection_state::disconnected)
             {
-                m_logger.log(trace_level::info, "Stopping was ignored because the connection is already in the disconnected state.");
+                m_logger.log(
+                    trace_level::info,
+                    "Stopping was ignored because the connection is already in the disconnected state."
+                );
                 return;
             }
 
@@ -817,9 +870,11 @@ namespace signalr
         m_signalr_client_config = config;
     }
 
-    void connection_impl::set_disconnected(const std::function<void(std::exception_ptr)>& disconnected)
+    void connection_impl::set_disconnected(const std::function<void(const std::exception_ptr&)>& disconnected)
     {
-        ensure_disconnected("cannot set the disconnected callback when the connection is not in the disconnected state. ");
+        ensure_disconnected(
+            "cannot set the disconnected callback when the connection is not in the disconnected state. "
+        );
         m_disconnected = disconnected;
     }
 
@@ -855,16 +910,13 @@ namespace signalr
         return old_state;
     }
 
-    void connection_impl::handle_connection_state_change(connection_state old_state, connection_state new_state)
-    {
-        if (m_logger.is_enabled(trace_level::verbose))
-        {
-            m_logger.log(
-                trace_level::verbose,
-                translate_connection_state(old_state)
-                .append(" -> ")
-                .append(translate_connection_state(new_state)));
-        }
+    void connection_impl::handle_connection_state_change(
+        const connection_state old_state, const connection_state new_state
+    ) const {
+        m_logger.logv(
+            trace_level::verbose,
+            translate_connection_state(old_state), " -> ", translate_connection_state(new_state)
+        );
 
         // Words of wisdom (if we decide to add a state_changed callback and invoke it from here):
         // "Be extra careful when you add this callback, because this is sometimes being called with the m_stop_lock.

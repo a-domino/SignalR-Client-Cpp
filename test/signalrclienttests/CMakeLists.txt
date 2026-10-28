@@ -35,7 +35,7 @@ include_directories(
 
 # include main library sources for "internals visible to"
 list (APPEND SOURCES
-  ../../src/signalrclient/callback_manager.cpp
+  ../../src/signalrclient/hub_callback_manager.cpp
   ../../src/signalrclient/cancellation_token.cpp
   ../../src/signalrclient/cancellation_token_source.cpp
   ../../src/signalrclient/connection_impl.cpp

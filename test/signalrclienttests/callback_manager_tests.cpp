@@ -3,13 +3,13 @@
 // See the LICENSE file in the project root for more information.
 
 #include "stdafx.h"
-#include "callback_manager.h"
+#include "hub_callback_manager.h"
 
 using namespace signalr;
 
 TEST(callback_manager_register_callback, register_returns_unique_callback_ids)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
     auto callback_id1 = callback_mgr.register_complete_callback([](const char*, const signalr::value&){});
     auto callback_id2 = callback_mgr.register_complete_callback([](const char*, const signalr::value&){});
 
@@ -18,7 +18,7 @@ TEST(callback_manager_register_callback, register_returns_unique_callback_ids)
 
 TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_removes_callback_if_remove_callback_true)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
 
     int callback_argument;
 
@@ -38,7 +38,7 @@ TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_removes_callb
 
 TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_does_not_remove_callback_if_remove_callback_false)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
 
     int callback_argument;
 
@@ -58,7 +58,7 @@ TEST(callback_manager_invoke_callback, invoke_callback_invokes_and_does_not_remo
 
 TEST(callback_manager_invoke_callback, invoke_callback_returns_false_for_invalid_callback_id)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
     auto callback_found = callback_mgr.invoke_complete_callback("42", nullptr, signalr::value(), true);
 
     ASSERT_FALSE(callback_found);
@@ -69,7 +69,7 @@ TEST(callback_manager_remove, remove_removes_callback_and_returns_true_for_valid
     auto callback_called = false;
 
     {
-        callback_manager callback_mgr{ "" };
+        hub_callback_manager callback_mgr{ "" };
 
         auto callback_id = callback_mgr.register_complete_callback(
             [&callback_called](const char*, const signalr::value&)
@@ -86,13 +86,13 @@ TEST(callback_manager_remove, remove_removes_callback_and_returns_true_for_valid
 
 TEST(callback_manager_remove, remove_returns_false_for_invalid_callback_id)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
     ASSERT_FALSE(callback_mgr.remove_complete_callback("42"));
 }
 
 TEST(callback_manager_clear, clear_invokes_all_callbacks)
 {
-    callback_manager callback_mgr{ "" };
+    hub_callback_manager callback_mgr{ "" };
     auto invocation_count = 0;
 
     for (auto i = 0; i < 10; i++)
@@ -116,7 +116,7 @@ TEST(callback_manager_dtor, clear_invokes_all_callbacks)
     auto invocation_count = 0;
 
     {
-        callback_manager callback_mgr{ "error" };
+        hub_callback_manager callback_mgr{ "error" };
         for (auto i = 0; i < 10; i++)
         {
             callback_mgr.register_complete_callback(

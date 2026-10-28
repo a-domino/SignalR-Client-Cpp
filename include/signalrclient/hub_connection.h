@@ -41,21 +41,25 @@ namespace signalr
         SIGNALRCLIENT_API hub_connection& operator=(hub_connection&&) noexcept;
 
         SIGNALRCLIENT_API void __cdecl start(std::function<void(std::exception_ptr)> callback) noexcept;
-        SIGNALRCLIENT_API void __cdecl stop(std::function<void(std::exception_ptr)> callback) noexcept;
+        SIGNALRCLIENT_API void __cdecl stop(const std::function<void(const std::exception_ptr&)>& callback) const noexcept;
 
         SIGNALRCLIENT_API connection_state __cdecl get_connection_state() const;
         SIGNALRCLIENT_API std::string __cdecl get_connection_id() const;
 
-        SIGNALRCLIENT_API void __cdecl set_disconnected(const std::function<void __cdecl(std::exception_ptr)>& disconnected_callback);
+        SIGNALRCLIENT_API void __cdecl set_disconnected(
+            const std::function<void(const std::exception_ptr&)>& disconnected_callback
+        ) const;
 
         SIGNALRCLIENT_API void __cdecl set_client_config(const signalr_client_config& config);
 
-        SIGNALRCLIENT_API void __cdecl on(const std::string& event_name, const method_invoked_handler& handler);
+        SIGNALRCLIENT_API void __cdecl on(const std::string& event_name, const method_invoked_handler& handler) const;
 
         SIGNALRCLIENT_API void invoke(
             const std::string& method_name,
             const std::vector<value>& arguments = std::vector<signalr::value>(),
-            std::function<void(value&&, std::exception_ptr)> callback = [](const signalr::value&, std::exception_ptr) {}
+            const std::function<void(value&&, const std::exception_ptr&)>& callback = [](
+                const signalr::value&, const std::exception_ptr&
+            ) {}
         ) const noexcept;
 
         SIGNALRCLIENT_API void send(const std::string& method_name, const std::vector<signalr::value>& arguments = std::vector<signalr::value>(), std::function<void(std::exception_ptr)> callback = [](std::exception_ptr) {}) noexcept;

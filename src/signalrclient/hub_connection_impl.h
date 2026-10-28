@@ -6,7 +6,7 @@
 
 #include <unordered_map>
 #include <utility>
-#include "callback_manager.h"
+#include "hub_callback_manager.h"
 #include "case_insensitive_comparison_utils.h"
 #include "completion_event.h"
 #include "signalrclient/signalr_value.h"
@@ -40,25 +40,31 @@ namespace signalr
         hub_connection_impl(const hub_connection_impl&) = delete;
         hub_connection_impl& operator=(const hub_connection_impl&) = delete;
 
+        virtual ~hub_connection_impl();
+
         void on(const std::string& event_name, const method_invoked_handler& handler);
 
         void invoke(
             const std::string& method_name, const std::vector<value>& arguments,
-            std::function<void(value&&, std::exception_ptr)> callback
+            const std::function<void(value&&, const std::exception_ptr&)>& callback
         ) noexcept;
         void send(
             const std::string& method_name, const std::vector<signalr::value>& arguments,
             const std::function<void(std::exception_ptr)>& callback
         ) noexcept;
 
-        [[noreturn]] std::unique_ptr<cancel_stream_interface> stream(
+        void stream(
             const std::string& method_name, const std::vector<signalr::value>& arguments,
+            const std::function<void(std::unique_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
             const std::function<void(signalr::value&&)>& handle_item_callback,
             const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
         );
 
-        void start(std::function<void(std::exception_ptr)> callback) noexcept;
-        void stop(std::function<void(std::exception_ptr)> callback, bool is_dtor = false) noexcept;
+        void start(const std::function<void(std::exception_ptr)>& callback) noexcept;
+        void stop(
+            const std::function<void(const std::exception_ptr&)>& callback,
+            const std::exception_ptr& reason = nullptr, bool is_dtor = false
+        ) noexcept;
 
         connection_state get_connection_state() const noexcept;
         std::string get_connection_id() const;
@@ -76,7 +82,7 @@ namespace signalr
         );
 
         class same_thread_message_handler : public std::enable_shared_from_this<same_thread_message_handler>
-                                            , public message_handler {
+                                          , public message_handler {
         public:
             static std::shared_ptr<same_thread_message_handler> create(
                 const std::weak_ptr<hub_connection_impl>& hub_conn_impl
@@ -84,15 +90,15 @@ namespace signalr
                 return std::shared_ptr<same_thread_message_handler>(new same_thread_message_handler(hub_conn_impl));
             }
 
-            void handle_invocation_message(invocation_message&& invocation_msg) override;
-            void handle_stream_item_message(stream_item_message&& stream_item_message) override;
-            void handle_completion_message(completion_message&& completion_message) override;
-            void handle_stream_invocation_message(stream_invocation_message&& stream_invocation_message) override;
-            void handle_cancel_invocation_message(cancel_invocation_message&& cancel_invocation_message) override;
-            void handle_ping_message(ping_message&& ping_message) override;
-            void handle_close_message(close_message&& close_message) override;
-            void handle_ack_message(ack_message&& ack_message) override;
-            void handle_sequence_message(sequence_message&& sequence_message) override;
+            void handle_invocation_message(invocation_message&& invocation_msg) noexcept override;
+            void handle_stream_item_message(stream_item_message&& stream_item_message) noexcept override;
+            void handle_completion_message(completion_message&& completion_message) noexcept override;
+            void handle_stream_invocation_message(stream_invocation_message&& stream_invocation_message) noexcept override;
+            void handle_cancel_invocation_message(cancel_invocation_message&& cancel_invocation_message) noexcept override;
+            void handle_ping_message(ping_message&& ping_message) noexcept override;
+            void handle_close_message(close_message&& close_message) noexcept override;
+            void handle_ack_message(ack_message&& ack_message) noexcept override;
+            void handle_sequence_message(sequence_message&& sequence_message) noexcept override;
 
         private:
             explicit same_thread_message_handler(
@@ -106,28 +112,26 @@ namespace signalr
         public:
             cancel_stream(
                 const std::weak_ptr<hub_connection_impl>& hub, std::string callback_id
-            ) : m_hub(hub), m_callback_id(std::move(callback_id))
+            ) : m_hub(hub), m_invocation_id(std::move(callback_id))
             {}
 
-            bool cancel() override;
+            void cancel(const std::function<void(const std::exception_ptr&)>& callback) override;
 
-            ~cancel_stream() override {
-                cancel_stream::cancel();
-            }
+            ~cancel_stream() override;
 
         private:
             std::weak_ptr<hub_connection_impl> m_hub;
-            const std::string m_callback_id;
+            const std::string m_invocation_id;
         };
 
         std::shared_ptr<connection_impl> m_connection;
         logger m_logger;
-        callback_manager m_callback_manager;
+        hub_callback_manager m_callback_manager;
         mutable std::mutex m_subscriptions_mutex;
         std::unordered_map<std::string, method_invoked_handler, case_insensitive_hash, case_insensitive_equals> m_subscriptions;
         bool m_handshakeReceived;
         std::shared_ptr<completion_event> m_handshakeTask;
-        std::function<void(std::exception_ptr)> m_disconnected;
+        std::function<void(const std::exception_ptr&)> m_disconnected;
         std::shared_ptr<cancellation_token_source> m_disconnect_cts;
         signalr_client_config m_signalr_client_config;
         std::shared_ptr<message_handler> m_message_handler;
@@ -142,6 +146,7 @@ namespace signalr
         std::vector<std::function<void(std::exception_ptr)>> m_stop_callbacks;
 
         void initialize();
+        void stop_connection(const std::exception_ptr& reason = nullptr) noexcept;
 
         void process_response(std::string&& response);
 
@@ -153,5 +158,9 @@ namespace signalr
         void reset_server_timeout();
 
         void start_keepalive();
+
+        void send_cancel_stream(
+            const std::string& invocation_id, const std::function<void(const std::exception_ptr&)>& callback
+        ) const;
     };
 }
