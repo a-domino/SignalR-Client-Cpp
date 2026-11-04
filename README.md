@@ -27,8 +27,7 @@ Below are instructions to build on different OS's. You can also use the followin
 | Command line | Description | Default value |
 | --- | --- | --- |
 | -DBUILD_SAMPLES | Build the included sample project | false |
-| -DBUILD_TESTING | Builds the test project | true |
-| -DUSE_CPPRESTSDK | Includes the CppRestSDK (default http stack) (requires cpprestsdk to be installed) | false |
+| -DBUILD_TESTING | Builds the test project | true | 
 | -DUSE_MSGPACK | Adds an option to use the MessagePack Hub Protocol (requires msgpack to be installed, e.g. `vcpkg install msgpack:x64-windows`) | false |
 | -DWERROR | Enables warnings as errors | true |
 | -DWALL | Enables all warnings | true |
@@ -43,10 +42,10 @@ automatically picks up the vcpkg toolchain from `VCPKG_ROOT`.
 
 ```powershell
 PS> git submodule update --init
-PS> & "$env:VCPKG_ROOT\vcpkg.exe" install cpprestsdk:x64-windows jsoncpp:x64-windows
+PS> & "$env:VCPKG_ROOT\vcpkg.exe" install jsoncpp:x64-windows
 PS> mkdir build.release
 PS> cd build.release
-PS> cmake .. -A x64 -DCMAKE_BUILD_TYPE=Release -DUSE_CPPRESTSDK=true
+PS> cmake .. -A x64 -DCMAKE_BUILD_TYPE=Release
 PS> cmake --build . --config Release
 ```
 Output will be in `build.release\bin\Release\`
@@ -55,10 +54,10 @@ Output will be in `build.release\bin\Release\`
 ```bash
 $ git submodule update --init
 $ brew install gcc6
-$ "$VCPKG_ROOT/vcpkg" install cpprestsdk jsoncpp
+$ "$VCPKG_ROOT/vcpkg" install jsoncpp
 $ mkdir build.release
 $ cd build.release
-$ cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_CPPRESTSDK=true
+$ cmake .. -DCMAKE_BUILD_TYPE=Release
 $ cmake --build . --config Release
 ```
 Output will be in `build.release/bin/`
@@ -67,10 +66,10 @@ Output will be in `build.release/bin/`
 
 ```bash
 $ git submodule update --init
-$ "$VCPKG_ROOT/vcpkg" install cpprestsdk boost-system boost-chrono boost-thread jsoncpp
+$ "$VCPKG_ROOT/vcpkg" install boost-system boost-chrono boost-thread jsoncpp
 $ mkdir build.release
 $ cd build.release
-$ cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_CPPRESTSDK=true
+$ cmake .. -DCMAKE_BUILD_TYPE=Release
 $ cmake --build . --config Release
 ```
 Output will be in `build.release/bin/`

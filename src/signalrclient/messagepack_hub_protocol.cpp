@@ -142,7 +142,11 @@ static std::string write_invocation_msg(const invocation_type* invocation) {
     // Headers
     packer.pack_map(0);
 
-    pack_string(packer, invocation->invocation_id);
+    if (invocation->invocation_id.empty()) {
+        packer.pack_nil();
+    } else {
+        pack_string(packer, invocation->invocation_id);
+    }
 
     pack_string(packer, invocation->target);
 

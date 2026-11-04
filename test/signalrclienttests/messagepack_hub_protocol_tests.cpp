@@ -143,7 +143,7 @@ TEST(messagepack_hub_protocol, write_close_message)
 
     close_message msg_plain("", false);
     auto expected_plain = string_from_bytes({
-        0x04, 0x93, 0x07, 0xC0, 0xC2
+        0x04, 0x93, 0x07, 0xA0, 0xC2
     });
     ASSERT_EQ(expected_plain, protocol.write_close_message(&msg_plain));
 
@@ -412,7 +412,7 @@ namespace
         { string_from_bytes({0x07, 0x95, 0x03, 0x80, 0x91, 0x31, 0x03, 0x2A}), "reading 'invocationId' as string failed" },
         { string_from_bytes({0x07, 0x95, 0x03, 0x80, 0xA1, 0x31, 0xA0, 0x2A}), "reading 'result_kind' as int failed" },
         { string_from_bytes({0x05, 0x93, 0x03, 0x80, 0xA1, 0x31}), "completion message has too few properties" },
-        { string_from_bytes({0x06, 0x94, 0x03, 0x80, 0xA1, 0x31, 0x03}), "completion message has too few properties" },
+        { string_from_bytes({0x06, 0x94, 0x03, 0x80, 0xA1, 0x31, 0x03}), "completion result response has too few properties" },
         { string_from_bytes({0x08, 0x95, 0x03, 0x80, 0xA1, 0x31, 0x01, 0x91, 0x03}), "reading 'error' as string failed" },
 
         // stream item message
@@ -421,6 +421,7 @@ namespace
         // cancel invocation message
         { string_from_bytes({0x03, 0x92, 0x05, 0x80}), "cancel invocation message has too few properties" },
 
+        // TODO: test all the different close, ack & sequence message switch branches
         // close message
         { string_from_bytes({0x02, 0x91, 0x07}), "close message has too few properties" },
         { string_from_bytes({0x04, 0x93, 0x07, 0xC0, 0x90}), "reading a close message's 'allow_reconnect' field as an array is not allowed" },
@@ -430,15 +431,17 @@ namespace
         { string_from_bytes({0x04, 0x92, 0x08, 0x91, 0x01}), "Can't convert ack message's SequenceId str from an array" },
 
         // sequence message (exercises the current copy-paste string)
-        { string_from_bytes({0x02, 0x91, 0x09}), "ack message has too few properties" },
+        { string_from_bytes({0x02, 0x91, 0x09}), "sequence message has too few properties" },
         { string_from_bytes({0x04, 0x92, 0x09, 0x91, 0x01}), "Can't convert sequence message's SequenceId from an array" }
     };
 }
 
 TEST(messagepack_hub_protocol, invalid_messages_throw)
 {
+    int i = -1;
     for (const auto& pair : invalid_messages)
     {
+        ++i;
         try
         {
             auto handler = std::make_shared<test_message_handler>();
@@ -448,7 +451,7 @@ TEST(messagepack_hub_protocol, invalid_messages_throw)
         }
         catch (const std::exception& exception)
         {
-            ASSERT_STREQ(pair.second.c_str(), exception.what());
+            ASSERT_STREQ(pair.second.c_str(), exception.what()) << "Test invalid messagepack message: " << i << std::endl;
         }
     }
 }

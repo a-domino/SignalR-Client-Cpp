@@ -145,7 +145,7 @@ TEST(cancellation_token_source, can_timeout_wait)
             cts.cancel();
         });
 
-    ASSERT_EQ(cancellation_token_source::timeout_infinite, cts.wait(100));
+    ASSERT_EQ(cancellation_token_source::get_infinite_timeout(), cts.wait(100));
     ASSERT_FALSE(cts.is_canceled());
 
     mre.set();

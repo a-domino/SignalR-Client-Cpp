@@ -11,57 +11,66 @@
  * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
  ****/
 
-// Copied and modified slightly from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/include/cpprest/asyncrt_utils.h
+// Copied and modified from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/include/cpprest/asyncrt_utils.h
 
 #pragma once
 
-#include <string>
-#include <locale>
+#include <climits>
 #include <sstream>
-#include <limits.h>
+#include <string>
+#include <stdexcept>
+#include <locale>
 
-namespace signalr
-{
-    namespace utility
-    {
-        struct to_lower_ch_impl
-        {
-            char operator()(char c) const noexcept
-            {
-                if (c >= 'A' && c <= 'Z') return static_cast<char>(c - 'A' + 'a');
-                return c;
+namespace signalr {
+enum class transport_type {
+    long_polling,
+    websockets
+};
+
+namespace utility {
+    struct to_lower_ch_impl {
+        char operator()(char c) const noexcept {
+            if (c >= 'A' && c <= 'Z') {
+                return static_cast<char>(c - 'A' + 'a');
             }
-
-            wchar_t operator()(wchar_t c) const noexcept
-            {
-                if (c >= L'A' && c <= L'Z') return static_cast<wchar_t>(c - L'A' + L'a');
-                return c;
-            }
-        };
-
-        constexpr to_lower_ch_impl to_lower_ch{};
-
-        template<typename Target>
-        Target scan_string(const std::string& str)
-        {
-            Target t;
-            std::istringstream iss(str);
-            iss.imbue(std::locale::classic());
-            iss >> t;
-            if (iss.bad())
-            {
-                throw std::bad_cast();
-            }
-            return t;
+            return c;
         }
 
-        void inplace_tolower(std::string& target) noexcept
-        {
-            for (auto& ch : target)
-            {
-                ch = to_lower_ch(ch);
+        wchar_t operator()(wchar_t c) const noexcept {
+            if (c >= L'A' && c <= L'Z') {
+                return static_cast<wchar_t>(c - L'A' + L'a');
             }
+            return c;
         }
+    };
+
+    constexpr to_lower_ch_impl to_lower_ch{};
+
+    inline bool is_ascii_alpha(char c) noexcept {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    inline bool is_ascii_digit(char c) noexcept {
+        return c >= '0' && c <= '9';
+    }
+
+    template<typename Target>
+    Target scan_string(const std::string& str) {
+        Target t{};
+        std::istringstream iss(str);
+        iss.imbue(std::locale::classic());
+        iss >> t;
+        if (iss.fail() || iss.bad() || !iss.eof()) {
+            throw std::invalid_argument("failed to parse string: " + str);
+        }
+        return t;
+    }
+
+    inline void inplace_tolower(std::string& target) noexcept {
+        for (auto& ch : target) {
+            ch = to_lower_ch(ch);
+        }
+    }
 
         /// <summary>
         /// Our own implementation of alpha numeric instead of std::isalnum to avoid

@@ -2,11 +2,14 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-#pragma once
+#ifndef CANCELLATION_TOKEN_SOURCE_H
+#define CANCELLATION_TOKEN_SOURCE_H
 
 #include <assert.h>
 #include <condition_variable>
+#include <forward_list>
 #include <mutex>
+#include <queue>
 #include <vector>
 #include <string>
 
@@ -16,8 +19,8 @@ namespace signalr
 {
     class canceled_exception : public std::exception
     {
-        virtual char const* what() const noexcept
-        {
+    public:
+        char const* what() const noexcept override {
             return "an operation was canceled";
         }
     };
@@ -25,6 +28,16 @@ namespace signalr
     class aggregate_exception : public std::exception
     {
     public:
+        template <typename iterable>
+        static aggregate_exception create(typename iterable::iterator begin, typename iterable::const_iterator end) {
+            aggregate_exception exception;
+            while (begin != end) {
+                exception.add_err_msg(*begin);
+                ++begin;
+            }
+            return exception;
+        }
+
         void add_exception(const std::exception& ex)
         {
             if (!m_message.empty())
@@ -34,8 +47,16 @@ namespace signalr
             m_message += ex.what();
         }
 
-        virtual char const* what() const noexcept
+        void add_err_msg(const std::string& err_msg)
         {
+            if (m_message.empty()) {
+                m_message = err_msg;
+            } else {
+                m_message = err_msg + '\n' + m_message;
+            }
+        }
+
+        char const* what() const noexcept override {
             return m_message.c_str();
         }
     private:
@@ -45,7 +66,7 @@ namespace signalr
     class cancellation_token_source
     {
     public:
-        static const unsigned int timeout_infinite;
+        static constexpr unsigned int timeout_infinite = 0xFFFFFFFF;
 
         cancellation_token_source() noexcept
             : m_signaled(false)
@@ -56,11 +77,9 @@ namespace signalr
         cancellation_token_source& operator=(const cancellation_token_source&) = delete;
 
         // returns false if already canceled, otherwise true if this cancels
-        bool cancel()
-        {
-            bool signal = false;
-            std::vector<std::function<void()>> callbacks;
-            {
+        bool cancel() {
+            bool signal;
+            std::vector<std::function<void()>> callbacks; {
                 std::lock_guard<std::mutex> lock(m_lock);
                 signal = !m_signaled;
                 m_signaled = true;
@@ -69,29 +88,25 @@ namespace signalr
                 m_callbacks = std::vector<std::function<void()>>();
             } // unlock
 
-            if (!callbacks.empty())
-            {
-                aggregate_exception errors;
-                for (auto& func : callbacks)
-                {
-                    try
-                    {
+            if (!callbacks.empty()) {
+                std::forward_list<std::string> errors;
+                for (auto& func : callbacks) {
+                    try {
                         func();
-                    }
-                    catch (const std::exception& ex)
-                    {
-                        errors.add_exception(ex);
+                    } catch (const std::exception& ex) {
+                        errors.emplace_front(ex.what());
                     }
                 }
 
-                if (errors.what()[0] != 0)
-                {
-                    throw errors;
+                if (!errors.empty()) {
+                    throw aggregate_exception::create<std::forward_list<std::string>>(errors.begin(), errors.cend());
                 }
             }
 
             return signal;
         }
+
+        static unsigned int get_infinite_timeout() { return timeout_infinite; }
 
         void reset()
         {
@@ -137,7 +152,7 @@ namespace signalr
             }
         }
 
-        void register_callback(std::function<void()> callback)
+        void register_callback(const std::function<void()>& callback)
         {
             bool run_callback = false;
             {
@@ -165,5 +180,9 @@ namespace signalr
         std::vector<std::function<void()>> m_callbacks;
     };
 
-    cancellation_token get_cancellation_token(std::weak_ptr<cancellation_token_source> s);
+    inline cancellation_token get_cancellation_token(std::weak_ptr<cancellation_token_source> s) {
+        return {std::move(s)};
+    }
 }
+
+#endif // CANCELLATION_TOKEN_SOURCE_H

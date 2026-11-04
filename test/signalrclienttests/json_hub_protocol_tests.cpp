@@ -332,14 +332,14 @@ std::vector<std::pair<std::string, std::string>> invalid_messages
 
     { "{\"type\":1}\x1e", "Field 'target' not found for 'invocation' message" },
     { "{\"type\":1,\"target\":\"send\",\"invocationId\":42}\x1e", "Field 'arguments' not found for 'invocation' message" },
-    { "{\"type\":1,\"target\":\"send\",\"arguments\":[],\"invocationId\":42}\x1e", "Expected 'invocationId' to be of type 'string'" },
-    { "{\"type\":1,\"target\":\"send\",\"arguments\":42,\"invocationId\":\"42\"}\x1e", "Expected 'arguments' to be of type 'array'" },
-    { "{\"type\":1,\"target\":true,\"arguments\":[],\"invocationId\":\"42\"}\x1e", "Expected 'target' to be of type 'string'" },
+    { "{\"type\":1,\"target\":\"send\",\"arguments\":[],\"invocationId\":42}\x1e", "Expected 'invocation' message's 'invocationId' to be of type 'string'" },
+    { "{\"type\":1,\"target\":\"send\",\"arguments\":42,\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'arguments' to be of type 'array'" },
+    { "{\"type\":1,\"target\":true,\"arguments\":[],\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'target' to be of type 'string'" },
 
     { "{\"type\":3}\x1e", "Field 'invocationId' not found for 'completion' message" },
-    { "{\"type\":3,\"invocationId\":42}\x1e", "Expected 'invocationId' to be of type 'string'" },
+    { "{\"type\":3,\"invocationId\":42}\x1e","Expected 'completion' message's 'invocationId' to be of type 'string'" },
     // Updated string to match json_hub_protocol.cpp line 190
-    { "{\"type\":3,\"invocationId\":\"42\",\"error\":\"foo\",\"result\":true}\x1e", "Found both 'error' and 'result' fields in 'completion' message" },
+    { "{\"type\":3,\"invocationId\":\"42\",\"error\":\"foo\",\"result\":true}\x1e", "Found both 'error' and 'result' fields in 'completion' message. The 'error' and 'result' properties are mutually exclusive." },
 
     { "{\"type\":4}\x1e", "Field 'target' not found for 'stream_invocation' message" },
     { "{\"type\":4,\"target\":\"send\"}\x1e", "Field 'arguments' not found for 'stream_invocation' message" },
@@ -359,8 +359,10 @@ std::vector<std::pair<std::string, std::string>> invalid_messages
 
 TEST(json_hub_protocol, invalid_messages_throw)
 {
+    int i = -1;
     for (const auto& pair : invalid_messages)
     {
+        ++i;
         try
         {
             auto handler = std::make_shared<test_message_handler>();
@@ -370,7 +372,7 @@ TEST(json_hub_protocol, invalid_messages_throw)
         }
         catch (const std::exception& exception)
         {
-            ASSERT_STREQ(pair.second.c_str(), exception.what());
+            ASSERT_STREQ(pair.second.c_str(), exception.what()) << "Test invalid JSON message: " << i << std::endl;
         }
     }
 }

@@ -15,7 +15,7 @@
 
 ## Modify vcpkg/ports/microsoft-signalr/CONTROL
 * Update the `Version`
-* Add any new features we want users to be able to add/remove (msgpack, cpprestsdk, etc.)
+* Add any new features we want users to be able to add/remove (msgpack, etc.)
 
 ## Modify vcpkg/ports/microsoft-signalr/portfile.cmake
 * Change the `REF` to be the tag name

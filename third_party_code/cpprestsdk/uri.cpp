@@ -11,7 +11,7 @@
  * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
  ****/
 
-// Copied and modified slightly from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/src/uri/uri.cpp
+// Copied and modified from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/src/uri/uri.cpp
 
 #include "../../src/signalrclient/stdafx.h"
 #include "base_uri.h"
@@ -19,6 +19,7 @@
 #include "utility.h"
 
 #include <sstream>
+#include <utility>
 
 namespace signalr
 {
@@ -215,10 +216,10 @@ namespace signalr
 
                     // if we see two slashes next, then we're going to parse the authority portion
                     // later on we'll break up the authority into the port and host
-                    const char* authority_begin = nullptr;
-                    const char* authority_end = nullptr;
                     if (*p == '/' && p[1] == '/')
                     {
+                        const char* authority_end = nullptr;
+                        const char* authority_begin = nullptr;
                         // skip over the slashes
                         p += 2;
                         authority_begin = p;
@@ -335,8 +336,7 @@ namespace signalr
                     return true;
                 }
 
-                void write_to(uri_components& components)
-                {
+                void write_to(uri_components& components) const {
                     if (scheme_begin)
                     {
                         components.m_scheme.assign(scheme_begin, scheme_end);
@@ -400,10 +400,10 @@ namespace signalr
             {
                 const char* const hex = "0123456789ABCDEF";
                 std::string encoded;
-                for (auto iter = raw.begin(); iter != raw.end(); ++iter)
+                for (char iter : raw)
                 {
                     // for utf8 encoded string, char ASCII can be greater than 127.
-                    int ch = static_cast<unsigned char>(*iter);
+                    int ch = static_cast<unsigned char>(iter);
                     // ch should be same under both utf8 and utf16.
                     if (should_encode(ch))
                     {
@@ -437,41 +437,48 @@ namespace signalr
             }
 
             // 5.2.4. Remove Dot Segments https://tools.ietf.org/html/rfc3986#section-5.2.4
-            void removeDotSegments(uri_builder& builder)
-            {
-                const ::std::string dotSegment = ".";
-                const ::std::string dotDotSegment = "..";
+            void removeDotSegments(uri_builder& builder) {
+                const std::string dotSegment = ".";
+                const std::string dotDotSegment = "..";
 
-                if (builder.path().find('.') == std::string::npos) return;
-
-                const auto segments = uri::split_path(builder.path());
-                std::vector<std::reference_wrapper<const std::string>> result;
-                for (auto& segment : segments)
-                {
-                    if (segment == dotSegment)
-                        continue;
-                    else if (segment != dotDotSegment)
-                        result.push_back(segment);
-                    else if (!result.empty())
-                        result.pop_back();
-                }
-                if (result.empty())
-                {
-                    builder.set_path(std::string());
+                if (builder.path().find('.') == std::string::npos) {
                     return;
                 }
-                std::string path = result.front().get();
-                for (size_t i = 1; i != result.size(); ++i)
-                {
+
+                const bool had_leading_slash = !builder.path().empty() && builder.path().front() == '/';
+                const auto segments = uri::split_path(builder.path());
+                std::vector<std::reference_wrapper<const std::string>> result;
+
+                for (const auto& segment : segments) {
+                    if (segment == dotSegment) {
+                        continue;
+                    } else if (segment != dotDotSegment) {
+                        result.emplace_back(segment);
+                    } else if (!result.empty()) {
+                        result.pop_back();
+                    }
+                }
+
+                if (result.empty()) {
+                    builder.set_path(had_leading_slash ? "/" : "");
+                    return;
+                }
+
+                std::string path;
+                if (had_leading_slash) {
+                    path.push_back('/');
+                }
+                path += result.front().get();
+                for (size_t i = 1; i != result.size(); ++i) {
                     path += '/';
                     path += result[i].get();
                 }
-                if (segments.back() == dotDotSegment || segments.back() == dotSegment || builder.path().back() == '/')
-                {
+
+                if (segments.back() == dotDotSegment || segments.back() == dotSegment || builder.path().back() == '/') {
                     path += '/';
                 }
 
-                builder.set_path(std::move(path));
+                builder.set_path(path);
             }
         } // namespace
 
@@ -546,11 +553,11 @@ namespace signalr
         }
     } // namespace details
 
-    uri::uri(const details::uri_components& components) : m_components(components)
+    uri::uri(details::uri_components  components) : m_components(std::move(components))
     {
         m_uri = m_components.join();
 
-        if (!uri::validate(m_uri.c_str()))
+        if (!uri::validate(m_uri))
         {
             throw uri_exception("provided uri is invalid: " + m_uri);
         }
@@ -588,7 +595,7 @@ namespace signalr
             });
     }
 
-    /// </summary>
+    /// <summary>
     /// Encodes a string by converting all characters except for RFC 3986 unreserved characters to their
     /// hexadecimal representation.
     /// </summary>
@@ -709,38 +716,34 @@ namespace signalr
         return results;
     }
 
-    std::map<std::string, std::string> uri::split_query(const std::string& query)
-    {
+    std::map<std::string, std::string> uri::split_query(const std::string& query) {
         std::map<std::string, std::string> results;
+        size_t start = 0;
+        if (!query.empty() && query.front() == '?') {
+            start = 1;
+        }
 
-        // Split into key value pairs separated by '&'.
-        size_t prev_amp_index = 0;
-        while (prev_amp_index != std::string::npos)
-        {
-            size_t amp_index = query.find_first_of('&', prev_amp_index);
-            if (amp_index == std::string::npos) amp_index = query.find_first_of(';', prev_amp_index);
+        while (start < query.size()) {
+            const size_t delimiter_index = query.find_first_of("&;", start);
+            const std::string pair = (delimiter_index == std::string::npos)
+                ? query.substr(start)
+                : query.substr(start, delimiter_index - start);
 
-            std::string key_value_pair = query.substr(
-                prev_amp_index,
-                amp_index == std::string::npos ? query.size() - prev_amp_index : amp_index - prev_amp_index);
-            prev_amp_index = amp_index == std::string::npos ? std::string::npos : amp_index + 1;
+            if (!pair.empty()) {
+                const size_t equals_index = pair.find('=');
+                if (equals_index == std::string::npos) {
+                    results[pair] = "";
+                } else {
+                    std::string key = pair.substr(0, equals_index);
+                    std::string value = pair.substr(equals_index + 1);
+                    results[std::move(key)] = std::move(value);
+                }
+            }
 
-            size_t equals_index = key_value_pair.find_first_of('=');
-            if (equals_index == std::string::npos)
-            {
-                continue;
+            if (delimiter_index == std::string::npos) {
+                break;
             }
-            else if (equals_index == 0)
-            {
-                std::string value(key_value_pair.begin() + (int64_t)equals_index + 1, key_value_pair.end());
-                results[std::string{}] = value;
-            }
-            else
-            {
-                std::string key(key_value_pair.begin(), key_value_pair.begin() + (int64_t)equals_index);
-                std::string value(key_value_pair.begin() + (int64_t)equals_index + 1, key_value_pair.end());
-                results[key] = value;
-            }
+            start = delimiter_index + 1;
         }
 
         return results;

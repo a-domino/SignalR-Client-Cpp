@@ -5,14 +5,6 @@
     "jsoncpp",
     "msgpack"
   ],
-  "features": {
-    "cpprestsdk": {
-      "description": "Build with the cpprestsdk-based HTTP/WebSocket transport",
-      "dependencies": [
-        "cpprestsdk"
-      ]
-    }
-  },
   "overrides": [
     {
       "name": "openssl",

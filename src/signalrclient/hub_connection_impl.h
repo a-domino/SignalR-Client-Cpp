@@ -71,7 +71,6 @@ namespace signalr
         void stop(
             const std::function<void(const std::exception_ptr&)>& callback,
             std::chrono::milliseconds send_stop_msg_timeout = std::chrono::seconds(5),
-            stop_type stop_type = stop_type::continue_on_close_error,
             const std::exception_ptr& reason = nullptr
         ) noexcept;
 
@@ -161,15 +160,11 @@ namespace signalr
         std::mutex m_stop_callback_lock;
         std::vector<std::function<void(std::exception_ptr)>> m_stop_callbacks;
 
-        std::weak_ptr<hub_connection_impl> m_weak_this;
-
         void initialize();
         void stop_connection(const std::exception_ptr& reason = nullptr) noexcept;
 
         void process_response(std::string&& response);
 
-        bool invoke_callback(completion_message* completion);
-        void handle_invoke_request(const invocation_message* invocation) const;
         void send_invoke_completion(const std::string& invocation_id, const signalr::value& response, const std::exception_ptr& err) const;
 
         void reset_send_ping();

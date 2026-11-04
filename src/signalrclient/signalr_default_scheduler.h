@@ -27,7 +27,7 @@ namespace signalr
         void schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay) override;
         ~signalr_default_scheduler() override;
 
-        void close();
+        void close() const;
 
     private:
         struct delayed_task

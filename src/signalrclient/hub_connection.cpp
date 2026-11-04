@@ -52,7 +52,6 @@ namespace signalr
                     completion.set();
                 },
                 std::chrono::milliseconds(100),
-                hub_connection_impl::stop_type::continue_on_close_error,
                 std::make_exception_ptr(signalr_exception("Shutting down"))
             );
             completion.get();
@@ -76,7 +75,7 @@ namespace signalr
 
     void hub_connection::stop(
         const std::function<void(const std::exception_ptr&)>& callback, std::chrono::milliseconds send_stop_msg_timeout,
-        stop_type stop_type, const std::exception_ptr& reason
+        const std::exception_ptr& reason
     ) const noexcept
     {
         if (!m_pImpl)
@@ -89,7 +88,7 @@ namespace signalr
             return;
         }
 
-        m_pImpl->stop(callback, send_stop_msg_timeout, static_cast<hub_connection_impl::stop_type>(stop_type), reason);
+        m_pImpl->stop(callback, send_stop_msg_timeout, reason);
     }
 
     void hub_connection::on(const std::string& event_name, const method_invoked_handler& handler) const {

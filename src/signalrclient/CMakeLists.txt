@@ -1,7 +1,6 @@
 set (SOURCES
   hub_callback_manager.cpp
   cancellation_token.cpp
-  cancellation_token_source.cpp
   connection_impl.cpp
   handshake_protocol.cpp
   hub_connection.cpp
@@ -15,13 +14,10 @@ set (SOURCES
   signalr_value.cpp
   stdafx.cpp
   trace_log_writer.cpp
-  transport.cpp
-  transport_factory.cpp
+        transport_factory.cpp
   url_builder.cpp
   websocket_transport.cpp
   signalr_default_scheduler.cpp
-  ../../third_party_code/cpprestsdk/uri.cpp
-  ../../third_party_code/cpprestsdk/uri_builder.cpp
 )
 
 if(USE_MSGPACK)
@@ -70,27 +66,7 @@ endif()
 
 target_link_libraries(microsoft-signalr PUBLIC ${JSONCPP_LIB})
 
-if(NOT USE_CPPRESTSDK)
-  target_link_libraries(microsoft-signalr)
-else()
-  set_target_properties(microsoft-signalr PROPERTIES COMPILE_FLAGS "-DUSE_CPPRESTSDK" )
-
-  if(APPLE)
-    target_link_libraries(microsoft-signalr
-      PUBLIC ${CPPREST_LIB}
-      PRIVATE OpenSSL::SSL Boost::boost Boost::system Boost::chrono Boost::thread
-    )
-  elseif(NOT WIN32)
-    target_link_libraries(microsoft-signalr
-      PUBLIC ${CPPREST_LIB} Boost::system
-      PRIVATE OpenSSL::SSL
-    )
-  else()
-    target_link_libraries(microsoft-signalr
-      PUBLIC ${CPPREST_LIB}
-    )
-  endif()
-endif() # USE_CPPRESTSDK
+target_link_libraries(microsoft-signalr)
 
 if(USE_MSGPACK)
   target_link_libraries(microsoft-signalr

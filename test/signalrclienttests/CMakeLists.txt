@@ -19,6 +19,8 @@ set (SOURCES
   url_builder_tests.cpp
   websocket_transport_tests.cpp
   signalr_default_scheduler_tests.cpp
+        uri_tests.cpp
+        json_helpers_tests.cpp
 )
 
 if(USE_MSGPACK)
@@ -37,7 +39,6 @@ include_directories(
 list (APPEND SOURCES
   ../../src/signalrclient/hub_callback_manager.cpp
   ../../src/signalrclient/cancellation_token.cpp
-  ../../src/signalrclient/cancellation_token_source.cpp
   ../../src/signalrclient/connection_impl.cpp
   ../../src/signalrclient/handshake_protocol.cpp
   ../../src/signalrclient/hub_connection.cpp
@@ -51,7 +52,6 @@ list (APPEND SOURCES
   ../../src/signalrclient/signalr_value.cpp
   ../../src/signalrclient/signalr_default_scheduler.cpp
   ../../src/signalrclient/trace_log_writer.cpp
-  ../../src/signalrclient/transport.cpp
   ../../src/signalrclient/transport_factory.cpp
   ../../src/signalrclient/url_builder.cpp
   ../../src/signalrclient/websocket_transport.cpp

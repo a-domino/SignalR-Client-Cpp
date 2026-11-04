@@ -19,6 +19,7 @@ namespace signalr
 
     public:
         logger(const std::shared_ptr<log_writer>& log_writer, trace_level trace_level, log_entry_handler = nullptr) noexcept;
+        logger(const logger& other) noexcept;
 
         void log(trace_level level, const char* entry, size_t entry_count) const;
 

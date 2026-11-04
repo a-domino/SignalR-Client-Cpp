@@ -49,7 +49,7 @@ TEST(websocket_transport_connect, connect_connects_and_starts_receive_loop)
     ASSERT_FALSE(log_entries.empty());
 
     auto entry = remove_date_from_log_entry(log_entries[0]);
-    ASSERT_EQ("[info     ] [websocket transport] connecting to: ws://fakeuri.org/connect?param=42\n", entry);
+    ASSERT_EQ("[info     ] [websocket transport] connecting to: ws://fakeuri.org/connect\n", entry);
 
     ws_transport->stop([&mre](const std::exception_ptr& exception)
     {
@@ -703,7 +703,7 @@ private:
 };
 }
 
-// validates that a 3rd party websocket client implementation wont cause a memory leak if it caches the callbacks
+// validates that a 3rd party WebSocket client implementation won't cause a memory leak if it caches the callbacks
 // passed from the websocket_transport
 TEST(websocket_client_custom_impl, caching_callbacks_does_not_leak)
 {
@@ -725,3 +725,1587 @@ TEST(websocket_client_custom_impl, caching_callbacks_does_not_leak)
     });
     mre.get();
 }
+
+// Regression: synchronous callbacks must not run while the transport's state mutex is held.
+TEST(websocket_transport_disconnect, stop_when_disconnected_can_start_from_callback) {
+    auto client = std::make_shared<test_websocket_client>();
+    auto ws_transport = websocket_transport::create(
+        [&client](const signalr_client_config& config) {
+            client->set_config(config);
+            return client;
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none)
+    );
+
+    auto start_complete = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& exception) {
+        if (exception) {
+            start_complete.set(exception);
+            return;
+        }
+
+        ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& start_error) {
+            start_complete.set(start_error);
+        });
+    });
+
+    start_complete.get();
+
+    auto stop_complete = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& exception) {
+        stop_complete.set(exception);
+    });
+    stop_complete.get();
+}
+
+// Regression: a retained WebSocket client pointer does not imply a connected transport.
+TEST(websocket_transport_send, cannot_send_after_stop) {
+    auto client = std::make_shared<test_websocket_client>();
+    std::atomic_bool send_called{false};
+    client->set_send_function([&](
+        const std::string&,
+        const std::function<void(std::exception_ptr)>& callback
+    ) {
+        send_called.store(true);
+        callback(nullptr);
+    });
+
+    auto ws_transport = websocket_transport::create(
+        [&client](const signalr_client_config& config) {
+            client->set_config(config);
+            return client;
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none)
+    );
+
+    auto start_complete = manual_reset_event<void>();
+    ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& exception) {
+        start_complete.set(exception);
+    });
+    start_complete.get();
+
+    auto stop_complete = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& exception) {
+        stop_complete.set(exception);
+    });
+    stop_complete.get();
+
+    auto send_error = std::promise<std::exception_ptr>();
+    auto send_result = send_error.get_future();
+    ws_transport->send("payload", transfer_format::text, [&](const std::exception_ptr& exception) {
+        send_error.set_value(exception);
+    });
+
+    ASSERT_NE(nullptr, send_result.get());
+    ASSERT_FALSE(send_called.load());
+}
+
+// 1. Tests that synchronous start exceptions do not strand pending stop callbacks
+TEST(websocket_transport_lifecycle, synchronous_start_failure_drains_stop_callbacks) {
+    auto client = std::make_shared<test_websocket_client>();
+    client->set_connect_function([](const std::string&, const std::function<void(std::exception_ptr)>&) {
+        throw std::runtime_error("immediate start exception");
+    });
+
+    auto ws_transport = websocket_transport::create(
+        [&client](const signalr_client_config& config) {
+            client->set_config(config);
+            return client;
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none)
+    );
+
+    auto start_mre = manual_reset_event<void>();
+    auto stop_mre = manual_reset_event<void>();
+
+    ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& ex) {
+        start_mre.set(ex);
+    });
+
+    ws_transport->stop([&](const std::exception_ptr& ex) {
+        stop_mre.set(ex);
+    });
+
+    try {
+        start_mre.get();
+        ASSERT_TRUE(false);
+    } catch (const std::runtime_error& ex) {
+        ASSERT_STREQ("immediate start exception", ex.what());
+    }
+
+    // Must not hang: stop callback must execute exactly once
+    stop_mre.get();
+}
+
+// 2. Tests that an exception in on_close does not prevent stop callbacks from completing
+TEST(websocket_transport_lifecycle, throwing_on_close_does_not_strand_stop_callbacks) {
+    auto client = std::make_shared<test_websocket_client>();
+    auto ws_transport = websocket_transport::create(
+        [&client](const signalr_client_config& config) {
+            client->set_config(config);
+            return client;
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none)
+    );
+
+    ws_transport->on_close([](const std::exception_ptr&) {
+        throw std::runtime_error("user callback explosion");
+    });
+
+    auto start_mre = manual_reset_event<void>();
+    ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& ex) {
+        start_mre.set(ex);
+    });
+    start_mre.get();
+
+    auto stop_mre = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& ex) {
+        stop_mre.set(ex);
+    });
+
+    // If on_close throwing aborted execution, this would hang
+    stop_mre.get();
+}
+
+namespace {
+
+class stale_callback_websocket_client : public websocket_client {
+public:
+    void start(
+        const std::string&,
+        const std::function<void(const std::exception_ptr&)>& callback
+    ) override {
+        callback(nullptr);
+    }
+
+    void stop(const std::function<void(const std::exception_ptr&)>& callback) override {
+        // Complete the in-flight receive loop with EOF so stop completes cleanly,
+        // while intentionally keeping m_receive_callback alive to simulate a stale delayed call later.
+        auto cb = m_receive_callback;
+        if (cb) {
+            cb("", nullptr);
+        }
+        callback(nullptr);
+    }
+
+    void send(
+        const std::string&,
+        signalr::transfer_format,
+        const std::function<void(std::exception_ptr)>& callback
+    ) override {
+        callback(nullptr);
+    }
+
+    void receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback) override {
+        m_receive_callback = callback;
+    }
+
+    std::function<void(std::string&&, const std::exception_ptr&)> m_receive_callback;
+};
+
+} // namespace
+
+TEST(websocket_transport_lifecycle, previous_session_cannot_pollute_new_session) {
+    std::shared_ptr<stale_callback_websocket_client> first_client;
+    std::shared_ptr<stale_callback_websocket_client> second_client;
+    int client_index = 0;
+
+    auto ws_transport = websocket_transport::create(
+        [&](const signalr_client_config&) -> std::shared_ptr<websocket_client> {
+            if (++client_index == 1) {
+                first_client = std::make_shared<stale_callback_websocket_client>();
+                return first_client;
+            }
+            second_client = std::make_shared<stale_callback_websocket_client>();
+            return second_client;
+        },
+        signalr_client_config{},
+        logger(std::make_shared<trace_log_writer>(), trace_level::none)
+    );
+
+    int close_event_count = 0;
+    ws_transport->on_close([&](const std::exception_ptr&) {
+        close_event_count++;
+    });
+
+    // Start session 1
+    auto start1_mre = manual_reset_event<void>();
+    ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& ex) {
+        start1_mre.set(ex);
+    });
+    start1_mre.get();
+
+    // Stop session 1
+    auto stop1_mre = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& ex) {
+        stop1_mre.set(ex);
+    });
+    stop1_mre.get();
+
+    ASSERT_EQ(1, close_event_count);
+
+    // Start session 2
+    auto start2_mre = manual_reset_event<void>();
+    ws_transport->start("ws://fakeuri.org", [&](const std::exception_ptr& ex) {
+        start2_mre.set(ex);
+    });
+    start2_mre.get();
+
+    // Invoke the stale receive callback from session 1 while session 2 is active
+    ASSERT_TRUE(first_client->m_receive_callback != nullptr);
+    first_client->m_receive_callback(
+        "",
+        std::make_exception_ptr(std::runtime_error("stale error from past connection"))
+    );
+
+    // Verify session 2 ignored the stale error and close_event_count is unchanged
+    ASSERT_EQ(1, close_event_count);
+
+    // Stop session 2
+    auto stop2_mre = manual_reset_event<void>();
+    ws_transport->stop([&](const std::exception_ptr& ex) {
+        stop2_mre.set(ex);
+    });
+    stop2_mre.get();
+
+    ASSERT_EQ(2, close_event_count);
+}
+
+namespace websocket_transport_lifecycle_additional {
+
+using completion_callback = std::function<void(const std::exception_ptr&)>;
+using receive_callback = std::function<void(std::string&&, const std::exception_ptr&)>;
+
+namespace {
+    // This fake completes start immediately by default, but deliberately holds stop
+    // and receive callbacks. Tests choose the exact order of asynchronous events.
+    class controlled_websocket_client final : public signalr::websocket_client {
+    public:
+        explicit controlled_websocket_client(bool delay_start = false) : m_delay_start(delay_start) {}
+
+        void start(const std::string&, const completion_callback& callback) override {
+            completion_callback completion;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                ++m_start_calls;
+                if (m_delay_start) {
+                    m_start_callback = callback;
+                } else {
+                    completion = callback;
+                }
+            }
+            if (completion) {
+                completion(nullptr);
+            }
+        }
+
+        void stop(const completion_callback& callback) override {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_stop_calls;
+            m_stop_callback = callback;
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            callback(nullptr);
+        }
+
+        void receive(const receive_callback& callback) override {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_receive_calls;
+            m_receive_callback = callback;
+        }
+
+        void complete_start(const std::exception_ptr& exception = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = std::move(m_start_callback);
+            }
+            if (callback) {
+                callback(exception);
+            }
+        }
+
+        void complete_stop(const std::exception_ptr& exception = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = std::move(m_stop_callback);
+            }
+            if (callback) {
+                callback(exception);
+            }
+        }
+
+        void complete_receive(std::string message = {}, const std::exception_ptr& exception = nullptr) {
+            receive_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = std::move(m_receive_callback);
+            }
+            if (callback) {
+                callback(std::move(message), exception);
+            }
+        }
+
+        int stop_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_stop_calls;
+        }
+
+    private:
+        mutable std::mutex m_mutex;
+        bool m_delay_start;
+        int m_start_calls{0};
+        int m_stop_calls{0};
+        int m_receive_calls{0};
+        completion_callback m_start_callback;
+        completion_callback m_stop_callback;
+        receive_callback m_receive_callback;
+    };
+}
+
+static std::shared_ptr<signalr::transport> make_transport(
+    const std::function<std::shared_ptr<signalr::websocket_client>(const signalr::signalr_client_config&)>& factory
+) {
+    return signalr::websocket_transport::create(
+        factory,
+        signalr::signalr_client_config{},
+        signalr::logger(std::make_shared<signalr::trace_log_writer>(), signalr::trace_level::none)
+    );
+}
+
+// Normal stop is deliberately completed in two steps: the underlying stop
+// callback first, then the outstanding receive callback. This tests that
+// completion waits for BOTH operations rather than assuming stop is immediate.
+static void finish_connected_stop(const std::shared_ptr<controlled_websocket_client>& client) {
+    client->complete_stop();
+    client->complete_receive();
+}
+
+TEST(websocket_transport_lifecycle_additional, second_stop_waits_for_first_shutdown) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int start_callbacks = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& exception) {
+        if (!exception) {
+            ++start_callbacks;
+        }
+    });
+    ASSERT_EQ(1, start_callbacks);
+
+    int first_stop_callbacks = 0;
+    int second_stop_callbacks = 0;
+    transport->stop([&](const std::exception_ptr&) { ++first_stop_callbacks; });
+    ASSERT_EQ(1, client->stop_calls());
+    ASSERT_EQ(0, first_stop_callbacks);
+
+    transport->stop([&](const std::exception_ptr&) { ++second_stop_callbacks; });
+    // Both requests must remain pending while the underlying close is unfinished.
+    EXPECT_EQ(0, second_stop_callbacks);
+
+    finish_connected_stop(client);
+    EXPECT_EQ(1, first_stop_callbacks);
+    EXPECT_EQ(1, second_stop_callbacks);
+    EXPECT_EQ(1, client->stop_calls());
+}
+
+TEST(websocket_transport_lifecycle_additional, cannot_replace_session_while_stop_is_pending) {
+    auto first = std::make_shared<controlled_websocket_client>();
+    std::shared_ptr<controlled_websocket_client> second;
+    int creations = 0;
+
+    auto transport = make_transport([&](const signalr::signalr_client_config&)
+        -> std::shared_ptr<signalr::websocket_client> {
+        if (++creations == 1) {
+            return first;
+        }
+        second = std::make_shared<controlled_websocket_client>();
+        return second;
+    });
+
+    int start1_callbacks = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr&) { ++start1_callbacks; });
+    ASSERT_EQ(1, start1_callbacks);
+
+    int stop1_callbacks = 0;
+    transport->stop([&](const std::exception_ptr&) { ++stop1_callbacks; });
+    ASSERT_EQ(0, stop1_callbacks);
+
+    int start2_callbacks = 0;
+    std::exception_ptr start2_error;
+    transport->start("ws://example.test", [&](const std::exception_ptr& exception) {
+        ++start2_callbacks;
+        start2_error = exception;
+    });
+
+    // Finish both sessions before asserting, even if the implementation incorrectly
+    // allowed the second start. This avoids leaving pending asynchronous callbacks.
+    finish_connected_stop(first);
+    if (second) {
+        transport->stop([](const std::exception_ptr&) {});
+        finish_connected_stop(second);
+    }
+
+    EXPECT_EQ(1, start2_callbacks);
+    EXPECT_NE(nullptr, start2_error) << "start() should reject a still-disconnecting transport";
+    EXPECT_EQ(1, stop1_callbacks) << "replacing the session must not abandon the first stop callback";
+    EXPECT_EQ(1, creations) << "a rejected start should not construct a second WebSocket client";
+}
+
+TEST(websocket_transport_lifecycle_additional, rejected_start_callback_does_not_hold_transport_mutex) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    std::promise<void> reentry_completed;
+    auto reentry_future = reentry_completed.get_future();
+    std::thread reentry_worker;
+    bool rejected_callback_called = false;
+    bool callback_was_lock_free = false;
+
+    transport->start("ws://example.test", [&](const std::exception_ptr& exception) {
+        rejected_callback_called = (exception != nullptr);
+        reentry_worker = std::thread([transport, &reentry_completed]() {
+            transport->on_receive([](std::string&&, const std::exception_ptr&) {});
+            reentry_completed.set_value();
+        });
+        // This wait is bounded. On the buggy implementation it times out, the
+        // callback returns, and the blocked worker can finish and be joined.
+        callback_was_lock_free =
+            reentry_future.wait_for(std::chrono::milliseconds(300)) == std::future_status::ready;
+    });
+
+    if (reentry_worker.joinable()) {
+        reentry_worker.join();
+    }
+    transport->stop([](const std::exception_ptr&) {});
+    finish_connected_stop(client);
+
+    EXPECT_TRUE(rejected_callback_called);
+    EXPECT_TRUE(callback_was_lock_free) << "rejected start invoked a callback while m_mutex was locked";
+}
+
+TEST(websocket_transport_lifecycle_additional, aborted_connect_propagates_websocket_stop_error) {
+    auto client = std::make_shared<controlled_websocket_client>(true);
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    std::exception_ptr start_error;
+    std::exception_ptr stop_error;
+    int start_count = 0;
+    int stop_count = 0;
+
+    transport->start("ws://example.test", [&](const std::exception_ptr& exception) {
+        ++start_count;
+        start_error = exception;
+    });
+    transport->stop([&](const std::exception_ptr& exception) {
+        ++stop_count;
+        stop_error = exception;
+    });
+
+    client->complete_start();
+    ASSERT_EQ(1, client->stop_calls());
+    client->complete_stop(std::make_exception_ptr(std::runtime_error("websocket stop failed")));
+
+    EXPECT_EQ(1, start_count);
+    EXPECT_NE(nullptr, start_error);  // Starting was canceled.
+    EXPECT_EQ(1, stop_count);
+    EXPECT_NE(nullptr, stop_error) << "aborted connection discarded the underlying stop error";
+}
+
+TEST(websocket_transport_lifecycle_additional, send_callback_exception_is_not_delivered_twice) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    int callback_count = 0;
+    transport->send("hello", signalr::transfer_format::text, [&](const std::exception_ptr&) {
+        if (++callback_count == 1) {
+            throw std::runtime_error("user callback exception");
+        }
+    });
+
+    transport->stop([](const std::exception_ptr&) {});
+    finish_connected_stop(client);
+
+    EXPECT_EQ(1, callback_count) << "a throwing user callback must not be invoked a second time";
+}
+
+TEST(websocket_transport_lifecycle_additional, start_callback_exception_is_not_delivered_twice) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int callback_count = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr&) {
+        if (++callback_count == 1) {
+            throw std::runtime_error("user start callback exception");
+        }
+    });
+
+    // A failed assertion must not leave a live client waiting for a shutdown event.
+    transport->stop([](const std::exception_ptr&) {});
+    finish_connected_stop(client);
+    EXPECT_EQ(1, callback_count) << "start() interpreted a throwing user callback as another connection failure";
+}
+
+} // websocket_transport_lifecycle_additional
+
+
+namespace websocket_transport_round4 {
+
+using completion_callback = std::function<void(const std::exception_ptr&)>;
+using receive_callback = std::function<void(std::string&&, const std::exception_ptr&)>;
+
+namespace {
+    class controlled_websocket_client final : public signalr::websocket_client {
+    public:
+        enum class start_mode {
+            succeed,
+            fail,
+            deferred
+        };
+
+        explicit controlled_websocket_client(start_mode mode = start_mode::succeed) : m_mode(mode) {}
+
+        void start(const std::string&, const completion_callback& callback) override {
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                ++m_start_calls;
+                m_start_callback = callback;
+            }
+
+            if (m_mode == start_mode::succeed) {
+                callback(nullptr);
+            } else if (m_mode == start_mode::fail) {
+                callback(std::make_exception_ptr(std::runtime_error("start failed")));
+            }
+        }
+
+        void stop(const completion_callback& callback) override {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_stop_calls;
+            if (m_throw_on_stop) {
+                throw std::runtime_error("client stop threw");
+            }
+            m_stop_callback = callback;
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                ++m_send_calls;
+            }
+            callback(nullptr);
+        }
+
+        void receive(const receive_callback& callback) override {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_receive_calls;
+            m_receive_callbacks.push_back(callback);
+        }
+
+        void set_throw_on_stop(bool value) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_throw_on_stop = value;
+        }
+
+        // Deliberately retains the callback to emulate a misbehaving implementation
+        // that reports start completion more than once.
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_start(const std::exception_ptr& error = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = m_start_callback;
+            }
+            if (callback) {
+                callback(error);
+            }
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_stop(const std::exception_ptr& error = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = m_stop_callback;
+            }
+            if (callback) {
+                callback(error);
+            }
+        }
+
+        void emit_receive(const std::exception_ptr& error = nullptr, std::string payload = {}) {
+            receive_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_receive_callbacks.empty()) {
+                    return;
+                }
+                callback = std::move(m_receive_callbacks.front());
+                m_receive_callbacks.erase(m_receive_callbacks.begin());
+            }
+            callback(std::move(payload), error);
+        }
+
+        // ReSharper disable once CppDeclaratorNeverUsed
+        int start_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_start_calls;
+        }
+
+        int stop_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_stop_calls;
+        }
+
+        int receive_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_receive_calls;
+        }
+
+        int send_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_send_calls;
+        }
+
+    private:
+        const start_mode m_mode;
+        mutable std::mutex m_mutex;
+        bool m_throw_on_stop{false};
+        int m_start_calls{0};
+        int m_stop_calls{0};
+        int m_receive_calls{0};
+        int m_send_calls{0};
+        completion_callback m_start_callback;
+        completion_callback m_stop_callback;
+        std::vector<receive_callback> m_receive_callbacks;
+    };
+}
+
+static std::shared_ptr<signalr::transport> make_transport(
+    const std::function<std::shared_ptr<signalr::websocket_client>(const signalr::signalr_client_config&)>& factory
+) {
+    return signalr::websocket_transport::create(
+        factory,
+        signalr::signalr_client_config{},
+        signalr::logger(std::make_shared<signalr::trace_log_writer>(), signalr::trace_level::none)
+    );
+}
+
+// A connected session's normal stop completes only after BOTH client.stop()
+// and the outstanding client.receive() callbacks have run.
+static void finish_stop(const std::shared_ptr<controlled_websocket_client>& client) {
+    client->emit_stop();
+    client->emit_receive();
+}
+
+TEST(websocket_transport_round4, failed_start_callback_can_retry_immediately) {
+    auto failed_client = std::make_shared<controlled_websocket_client>(
+        controlled_websocket_client::start_mode::fail
+    );
+    auto good_client = std::make_shared<controlled_websocket_client>();
+    int factory_calls = 0;
+
+    auto transport = make_transport([&](const signalr::signalr_client_config&)
+        -> std::shared_ptr<signalr::websocket_client> {
+        return ++factory_calls == 1 ? failed_client : good_client;
+    });
+
+    std::exception_ptr first_error;
+    std::exception_ptr retry_error;
+    int retry_callbacks = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        first_error = error;
+        transport->start("ws://example.test", [&](const std::exception_ptr& retry) {
+            retry_error = retry;
+            ++retry_callbacks;
+        });
+    });
+
+    EXPECT_NE(nullptr, first_error);
+    EXPECT_EQ(1, retry_callbacks);
+    EXPECT_EQ(nullptr, retry_error) << "A failed-start callback should observe the transport as stopped";
+    EXPECT_EQ(2, factory_calls);
+
+    // Clean up even when this regression fails.
+    transport->stop([](const std::exception_ptr&) {});
+    finish_stop(good_client);
+}
+
+TEST(websocket_transport_round4, duplicate_successful_start_does_not_start_another_receive) {
+    auto client = std::make_shared<controlled_websocket_client>(
+        controlled_websocket_client::start_mode::deferred
+    );
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int start_callbacks = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++start_callbacks;
+    });
+
+    client->emit_start();
+    ASSERT_EQ(1, client->receive_calls());
+    client->emit_start(); // The same completion delivered a second time.
+
+    EXPECT_EQ(1, start_callbacks);
+    EXPECT_EQ(1, client->receive_calls()) << "A duplicate start completion launched a second receive loop";
+
+    transport->stop([](const std::exception_ptr&) {});
+    finish_stop(client);
+}
+
+TEST(websocket_transport_round4, stale_start_error_does_not_disconnect_a_live_session) {
+    auto client = std::make_shared<controlled_websocket_client>(
+        controlled_websocket_client::start_mode::deferred
+    );
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int start_callbacks = 0;
+    int close_notifications = 0;
+    transport->on_close([&](const std::exception_ptr&) { ++close_notifications; });
+    transport->start("ws://example.test", [&](const std::exception_ptr&) { ++start_callbacks; });
+    client->emit_start();
+    ASSERT_EQ(1, client->receive_calls());
+
+    client->emit_start(std::make_exception_ptr(std::runtime_error("late start error")));
+    std::exception_ptr send_error;
+    transport->send("still alive", signalr::transfer_format::text, [&](const std::exception_ptr& error) {
+        send_error = error;
+    });
+
+    EXPECT_EQ(1, start_callbacks);
+    EXPECT_EQ(0, close_notifications) << "A stale start error closed an already-connected session";
+    EXPECT_EQ(nullptr, send_error) << "A stale start error prevented sending on the live connection";
+    EXPECT_EQ(1, client->send_calls());
+
+    transport->stop([](const std::exception_ptr&) {});
+    finish_stop(client);
+}
+
+TEST(websocket_transport_round4, receive_error_with_throwing_client_stop_completes_shutdown) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+    client->set_throw_on_stop(true);
+
+    int close_notifications = 0;
+    std::exception_ptr close_error;
+    transport->on_close([&](const std::exception_ptr& error) {
+        ++close_notifications;
+        close_error = error;
+    });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    bool escaped_receive_callback = false;
+    try {
+        client->emit_receive(std::make_exception_ptr(std::runtime_error("receive failed")));
+    } catch (...) {
+        escaped_receive_callback = true;
+    }
+
+    // The original receive error should be reported, even if cleanup also fails.
+    EXPECT_FALSE(escaped_receive_callback) << "The receive callback leaked an exception from client.stop()";
+    EXPECT_EQ(1, close_notifications) << "The session never finalized after client.stop() threw";
+    EXPECT_NE(nullptr, close_error);
+
+    // This revision may leave the session disconnecting; its destructor uses
+    // a bounded shutdown wait. No additional blocking wait is performed here.
+}
+
+TEST(websocket_transport_round4, aborted_connect_with_throwing_client_stop_drains_callbacks) {
+    auto client = std::make_shared<controlled_websocket_client>(
+        controlled_websocket_client::start_mode::deferred
+    );
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+    client->set_throw_on_stop(true);
+
+    int start_callbacks = 0;
+    int stop_callbacks = 0;
+    std::exception_ptr start_error;
+    std::exception_ptr stop_error;
+
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        ++start_callbacks;
+        start_error = error;
+    });
+    transport->stop([&](const std::exception_ptr& error) {
+        ++stop_callbacks;
+        stop_error = error;
+    });
+
+    bool escaped_start_callback = false;
+    try {
+        client->emit_start();
+    } catch (...) {
+        escaped_start_callback = true;
+    }
+
+    EXPECT_FALSE(escaped_start_callback) << "The start-completion callback leaked an exception from client.stop()";
+    EXPECT_EQ(1, start_callbacks);
+    EXPECT_NE(nullptr, start_error);
+    EXPECT_EQ(1, stop_callbacks);
+    EXPECT_NE(nullptr, stop_error);
+}
+
+TEST(websocket_transport_round4, duplicate_websocket_stop_completion_is_ignored) {
+    auto client = std::make_shared<controlled_websocket_client>();
+    auto transport = make_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int stop_callbacks = 0;
+    int close_notifications = 0;
+    transport->on_close([&](const std::exception_ptr&) { ++close_notifications; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    transport->stop([&](const std::exception_ptr&) { ++stop_callbacks; });
+    client->emit_stop();
+    client->emit_receive();
+    client->emit_stop();
+
+    EXPECT_EQ(1, stop_callbacks);
+    EXPECT_EQ(1, close_notifications);
+    EXPECT_EQ(1, client->stop_calls());
+}
+
+TEST(websocket_transport_round4, mock_client_delivers_two_messages_in_order) {
+    auto client = std::make_shared<signalr::test_websocket_client>();
+    client->set_config(signalr::signalr_client_config{});
+
+    std::promise<std::exception_ptr> started;
+    auto start_result = started.get_future();
+    client->start("ws://example.test", [&](const std::exception_ptr& error) { started.set_value(error); });
+    ASSERT_EQ(std::future_status::ready, start_result.wait_for(std::chrono::seconds(3)));
+    ASSERT_EQ(nullptr, start_result.get());
+
+    std::mutex received_mutex;
+    std::vector<std::string> received;
+    std::promise<void> second_received;
+    auto second_result = second_received.get_future();
+
+    client->receive([&](std::string&& first, const std::exception_ptr& error) {
+        if (error) {
+            second_received.set_value();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(received_mutex);
+            received.push_back(std::move(first));
+        }
+        client->receive([&](std::string&& second, const std::exception_ptr& next_error) {
+            if (!next_error) {
+                std::lock_guard<std::mutex> lock(received_mutex);
+                received.push_back(std::move(second));
+            }
+            second_received.set_value();
+        });
+    });
+
+    client->receive_message("one");
+    client->receive_message("two");
+    ASSERT_EQ(std::future_status::ready, second_result.wait_for(std::chrono::seconds(3)));
+    second_result.get();
+
+    {
+        std::lock_guard<std::mutex> lock(received_mutex);
+        ASSERT_EQ(2U, received.size());
+        EXPECT_EQ("one", received[0]);
+        EXPECT_EQ("two", received[1]);
+    }
+    EXPECT_EQ(2, client->receive_count.load());
+
+    std::promise<std::exception_ptr> stopped;
+    auto stop_result = stopped.get_future();
+    client->stop([&](const std::exception_ptr& error) { stopped.set_value(error); });
+    ASSERT_EQ(std::future_status::ready, stop_result.wait_for(std::chrono::seconds(3)));
+    EXPECT_EQ(nullptr, stop_result.get());
+}
+
+} // websocket_transport_round4
+
+namespace websocket_transport_round5
+{
+using completion_callback = std::function<void(const std::exception_ptr&)>;
+using receive_callback = std::function<void(std::string&&, const std::exception_ptr&)>;
+
+namespace {
+    class round5_websocket_client final : public signalr::websocket_client {
+    public:
+        void start(const std::string&, const completion_callback& callback) override {
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_defer_start) {
+                    m_start_callback = callback;
+                    return;
+                }
+            }
+            callback(nullptr);
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_start(const std::exception_ptr& error = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = m_start_callback;
+            }
+            if (callback) {
+                callback(error);
+            }
+        }
+
+        void set_defer_start(bool value) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_defer_start = value;
+        }
+
+        void stop(const completion_callback& callback) override {
+            receive_callback receive;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                ++m_stop_calls;
+                m_last_stop_callback = callback;
+                if (m_defer_stop) {
+                    return;
+                }
+                if (m_complete_receive_on_stop) {
+                    receive = std::move(m_receive_callback);
+                }
+            }
+
+            if (receive) {
+                receive("", nullptr);
+            }
+            callback(nullptr);
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            ++m_send_calls;
+            callback(nullptr);
+        }
+
+        void receive(const receive_callback& callback) override {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_receive_calls;
+            if (m_throw_on_receive) {
+                throw std::runtime_error("receive registration failed");
+            }
+            m_receive_callback = callback;
+        }
+
+        void set_defer_stop(bool value) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_defer_stop = value;
+        }
+
+        void set_complete_receive_on_stop(bool value) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_complete_receive_on_stop = value;
+        }
+
+        void set_throw_on_receive(bool value) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_throw_on_receive = value;
+        }
+
+        void emit_receive(std::string message = {}, const std::exception_ptr& error = nullptr) {
+            receive_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = std::move(m_receive_callback);
+                m_last_receive_callback = callback;
+            }
+            if (callback) {
+                callback(std::move(message), error);
+            }
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void repeat_last_receive(std::string message) {
+            receive_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = m_last_receive_callback;
+            }
+            if (callback) {
+                callback(std::move(message), nullptr);
+            }
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_stop(const std::exception_ptr& error = nullptr) {
+            completion_callback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = m_last_stop_callback;
+            }
+            if (callback) {
+                callback(error);
+            }
+        }
+
+        int receive_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_receive_calls;
+        }
+
+        int stop_calls() const {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_stop_calls;
+        }
+
+        int send_calls() const {
+            return m_send_calls.load();
+        }
+
+    private:
+        mutable std::mutex m_mutex;
+        bool m_defer_start{false};
+        bool m_defer_stop{false};
+        bool m_complete_receive_on_stop{true};
+        bool m_throw_on_receive{false};
+        int m_receive_calls{0};
+        int m_stop_calls{0};
+        std::atomic<int> m_send_calls{0};
+        receive_callback m_receive_callback;
+        receive_callback m_last_receive_callback;
+        completion_callback m_last_stop_callback;
+        completion_callback m_start_callback;
+    };
+}
+
+static std::shared_ptr<signalr::transport> make_round5_transport(
+    const std::function<std::shared_ptr<signalr::websocket_client>(const signalr::signalr_client_config&)>& factory
+) {
+    return signalr::websocket_transport::create(
+        factory,
+        signalr::signalr_client_config{},
+        signalr::logger(std::make_shared<signalr::trace_log_writer>(), signalr::trace_level::none)
+    );
+}
+
+// Regression: an inline client.send completion must not prevent another thread from stopping the transport.
+// The wait is bounded. The worker is joined *after* send() returns, so the buggy implementation does not hang tests.
+TEST(websocket_transport_round5, synchronous_send_callback_does_not_hold_session_mutex) {
+    auto client = std::make_shared<round5_websocket_client>();
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    std::promise<void> stopped;
+    auto stopped_future = stopped.get_future();
+    std::thread stop_thread;
+    bool stop_finished_inside_send_callback = false;
+
+    transport->send("message", signalr::transfer_format::text, [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        stop_thread = std::thread([&]() {
+            transport->stop([&](const std::exception_ptr& stop_error) {
+                EXPECT_EQ(nullptr, stop_error);
+                stopped.set_value();
+            });
+        });
+        stop_finished_inside_send_callback =
+            stopped_future.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+    });
+
+    if (stop_thread.joinable()) {
+        stop_thread.join();
+    }
+    EXPECT_TRUE(stop_finished_inside_send_callback)
+        << "client.send invoked its completion while the session mutex was held";
+}
+
+// Regression: a non-std exception contained in exception_ptr must still complete all stop requests.
+// The test deliberately delays client.stop() completion until the receive token has a registered callback.
+TEST(websocket_transport_round5, non_std_websocket_stop_error_completes_stop) {
+    auto client = std::make_shared<round5_websocket_client>();
+    client->set_defer_stop(true);
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    int callbacks = 0;
+    std::exception_ptr delivered_error;
+    transport->stop([&](const std::exception_ptr& error) {
+        ++callbacks;
+        delivered_error = error;
+    });
+    client->emit_stop(std::make_exception_ptr(42));
+
+    bool escaped_callback = false;
+    try {
+        client->emit_receive();
+    } catch (...) {
+        escaped_callback = true;
+    }
+
+    EXPECT_FALSE(escaped_callback);
+    EXPECT_EQ(1, callbacks);
+    EXPECT_NE(nullptr, delivered_error);
+
+    // Recover the current implementation if it did not complete on the first stop result.
+    if (callbacks == 0) {
+        client->emit_stop();
+    }
+}
+
+// If WebSocket opening succeeds but registering the first receive throws, the connected client must be closed.
+TEST(websocket_transport_round5, failed_first_receive_registration_closes_open_websocket) {
+    auto client = std::make_shared<round5_websocket_client>();
+    client->set_throw_on_receive(true);
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int start_callbacks = 0;
+    std::exception_ptr start_error;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        ++start_callbacks;
+        start_error = error;
+    });
+
+    EXPECT_EQ(1, start_callbacks);
+    EXPECT_NE(nullptr, start_error);
+    EXPECT_EQ(1, client->stop_calls())
+        << "The transport abandoned a successfully opened WebSocket after receive() threw";
+}
+
+// Defensive contract test: one receive registration must deliver no more than one message.
+TEST(websocket_transport_round5, duplicate_receive_callback_is_ignored) {
+    auto client = std::make_shared<round5_websocket_client>();
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+    int messages = 0;
+    transport->on_receive([&](std::string&&, const std::exception_ptr&) { ++messages; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    client->emit_receive("first");
+    client->repeat_last_receive("duplicate");
+
+    EXPECT_EQ(1, messages);
+    EXPECT_EQ(2, client->receive_calls())
+        << "Repeating one completed receive should not schedule an additional receive";
+
+    transport->stop([](const std::exception_ptr&) {});
+}
+
+// Positive regression: a close handler may start a new connection, and a late callback from the old
+// client's stop must not clear or disrupt that new connection.
+TEST(websocket_transport_round5, close_callback_can_reconnect_and_ignore_old_stop_completion) {
+    auto first = std::make_shared<round5_websocket_client>();
+    auto second = std::make_shared<round5_websocket_client>();
+    int factory_calls = 0;
+    auto transport = make_round5_transport([&](const signalr::signalr_client_config&)
+        -> std::shared_ptr<signalr::websocket_client> {
+        return ++factory_calls == 1 ? first : second;
+    });
+
+    int close_callbacks = 0;
+    int retry_callbacks = 0;
+    transport->on_close([&](const std::exception_ptr&) {
+        ++close_callbacks;
+        if (close_callbacks == 1) {
+            transport->start("ws://example.test/reconnected", [&](const std::exception_ptr& error) {
+                EXPECT_EQ(nullptr, error);
+                ++retry_callbacks;
+            });
+        }
+    });
+
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+    int stop_callbacks = 0;
+    transport->stop([&](const std::exception_ptr&) { ++stop_callbacks; });
+    first->emit_stop(); // Old WebSocket client violates the contract and completes stop again.
+
+    int sends = 0;
+    transport->send("live", signalr::transfer_format::text, [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++sends;
+    });
+
+    EXPECT_EQ(2, factory_calls);
+    EXPECT_EQ(1, retry_callbacks);
+    EXPECT_EQ(1, stop_callbacks);
+    EXPECT_EQ(1, sends);
+    EXPECT_EQ(1, second->send_calls());
+
+    transport->on_close([](const std::exception_ptr&) {});
+    transport->stop([](const std::exception_ptr&) {});
+}
+
+// Contract-dependent test: if WebSocket stop completes without resolving a pending receive,
+// should transport.stop() still complete? See section 3.8 of REVIEW.md.
+TEST(websocket_transport_round5, stop_completes_without_receive_callback) {
+    auto client = std::make_shared<round5_websocket_client>();
+    client->set_complete_receive_on_stop(false);
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    int stop_callbacks = 0;
+    transport->stop([&](const std::exception_ptr&) { ++stop_callbacks; });
+    EXPECT_EQ(1, stop_callbacks)
+        << "Stop requires the underlying client to resolve its pending receive; this must be documented or fixed";
+
+    // Always finish the outstanding receive to avoid delaying teardown in the current implementation.
+    client->emit_receive();
+}
+
+// Contract-dependent stack-safety test: a client may complete receives inline when data is buffered.
+// The test uses a finite burst, so the current recursive implementation fails without exhausting the stack.
+namespace {
+
+    class round5_inline_receive_client final : public signalr::websocket_client {
+    public:
+        explicit round5_inline_receive_client(int messages) : m_remaining(messages) {}
+
+        void start(const std::string&, const completion_callback& callback) override {
+            callback(nullptr);
+        }
+
+        void stop(const completion_callback& callback) override {
+            if (m_pending_receive) {
+                auto pending = std::move(m_pending_receive);
+                pending("", nullptr);
+            }
+            callback(nullptr);
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            callback(nullptr);
+        }
+
+        void receive(const receive_callback& callback) override {
+            ++m_depth;
+            if (m_depth > m_max_depth) {
+                m_max_depth = m_depth;
+            }
+
+            if (m_remaining > 0) {
+                --m_remaining;
+                callback("buffered message", nullptr);
+            } else {
+                m_pending_receive = callback;
+            }
+            --m_depth;
+        }
+
+        int max_receive_depth() const {
+            return m_max_depth;
+        }
+
+    private:
+        int m_remaining;
+        int m_depth{0};
+        int m_max_depth{0};
+        receive_callback m_pending_receive;
+    };
+
+} // namespace
+
+TEST(websocket_transport_round5, buffered_inline_receives_do_not_grow_the_stack) {
+    constexpr int message_count = 128;
+    auto client = std::make_shared<round5_inline_receive_client>(message_count);
+    auto transport = make_round5_transport([client](const signalr::signalr_client_config&) { return client; });
+
+    int delivered_messages = 0;
+    transport->on_receive([&](std::string&&, const std::exception_ptr&) {
+        ++delivered_messages;
+    });
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    EXPECT_EQ(message_count, delivered_messages);
+    EXPECT_TRUE(client->max_receive_depth() <= 4)
+        << "Inline receive completions recursively called receive_loop()";
+
+    transport->stop([](const std::exception_ptr&) {});
+}
+
+// Retaining a close callback must not form a cycle: session -> client -> cached callback -> session.
+TEST(websocket_transport_round5, receive_error_stop_callback_does_not_leak_session) {
+    std::weak_ptr<round5_websocket_client> weak_client;
+    {
+        auto client = std::make_shared<round5_websocket_client>();
+        weak_client = client;
+        auto transport = make_round5_transport([client](const signalr::signalr_client_config&) {
+            return client;
+        });
+        transport->start("ws://example.test", [](const std::exception_ptr&) {});
+        client->emit_receive("", std::make_exception_ptr(std::runtime_error("connection dropped")));
+    }
+
+    EXPECT_TRUE(weak_client.expired())
+        << "A cached client.stop callback retained the session, which retained the client";
+}
+
+// The canceled-start shutdown path must also avoid strong captures of the session in a cached stop callback.
+TEST(websocket_transport_round5, aborted_start_stop_callback_does_not_leak_session) {
+    std::weak_ptr<round5_websocket_client> weak_client;
+    {
+        auto client = std::make_shared<round5_websocket_client>();
+        client->set_defer_start(true);
+        weak_client = client;
+        auto transport = make_round5_transport([client](const signalr::signalr_client_config&) {
+            return client;
+        });
+        transport->start("ws://example.test", [](const std::exception_ptr&) {});
+        transport->stop([](const std::exception_ptr&) {});
+        client->emit_start();
+    }
+
+    EXPECT_TRUE(weak_client.expired())
+        << "Canceled-start cleanup cached a callback that strongly retained the session";
+}
+
+} // namespace websocket_transport_round5
+
+namespace websocket_transport_round6 {
+
+using completion_callback = std::function<void(const std::exception_ptr&)>;
+using receive_callback = std::function<void(std::string&&, const std::exception_ptr&)>;
+
+namespace {
+    class round6_websocket_client final : public signalr::websocket_client {
+    public:
+        bool defer_start{false};
+        bool defer_stop{false};
+        bool throw_after_start_completion{false};
+        int throw_on_receive_number{0};
+
+        int start_calls{0};
+        int stop_calls{0};
+        int receive_calls{0};
+        int send_calls{0};
+
+        void start(const std::string&, const completion_callback& callback) override {
+            ++start_calls;
+            m_start_callback = callback;
+            if (defer_start) {
+                return;
+            }
+            callback(nullptr);
+            if (throw_after_start_completion) {
+                throw std::runtime_error("start threw after completion");
+            }
+        }
+
+        void stop(const completion_callback& callback) override {
+            ++stop_calls;
+            m_stop_callback = callback;
+            if (!defer_stop) {
+                callback(nullptr);
+            }
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            ++send_calls;
+            callback(nullptr);
+        }
+
+        void receive(const receive_callback& callback) override {
+            ++receive_calls;
+            if (throw_on_receive_number > 0 && receive_calls == throw_on_receive_number) {
+                throw std::runtime_error("receive registration failed");
+            }
+            m_receive_callback = callback;
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_start(const std::exception_ptr& error = nullptr) {
+            if (m_start_callback) {
+                m_start_callback(error);
+            }
+        }
+
+        // ReSharper disable once CppMemberFunctionMayBeConst
+        void emit_stop(const std::exception_ptr& error = nullptr) {
+            if (m_stop_callback) {
+                m_stop_callback(error);
+            }
+        }
+
+        void emit_receive(const std::string& message, const std::exception_ptr& error = nullptr) {
+            auto callback = std::move(m_receive_callback);
+            m_receive_callback = nullptr;
+            if (callback) {
+                callback(std::string(message), error);
+            }
+        }
+
+    private:
+        completion_callback m_start_callback;
+        completion_callback m_stop_callback;
+        receive_callback m_receive_callback;
+    };
+}
+
+static std::shared_ptr<signalr::transport> make_round6_transport(const std::shared_ptr<round6_websocket_client>& client) {
+    return signalr::websocket_transport::create(
+        [client](const signalr::signalr_client_config&) { return client; },
+        signalr::signalr_client_config{},
+        signalr::logger(std::make_shared<signalr::trace_log_writer>(), signalr::trace_level::none)
+    );
+}
+
+// A later receive-registration failure happens on the backend's callback thread, not in the initial start() call.
+// It must be handled without leaking an exception across that boundary or leaving the transport connected.
+TEST(websocket_transport_round6, second_receive_registration_failure_closes_connection) {
+    auto client = std::make_shared<round6_websocket_client>();
+    client->throw_on_receive_number = 2;
+    auto transport = make_round6_transport(client);
+
+    int start_callbacks = 0;
+    int close_callbacks = 0;
+    int received_messages = 0;
+    transport->on_close([&](const std::exception_ptr& error) {
+        ++close_callbacks;
+        EXPECT_NE(nullptr, error);
+    });
+    transport->on_receive([&](std::string&&, const std::exception_ptr&) { ++received_messages; });
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++start_callbacks;
+    });
+
+    EXPECT_EQ(1, client->receive_calls);
+    EXPECT_NO_THROW(client->emit_receive("first"));
+    EXPECT_EQ(1, start_callbacks);
+    EXPECT_EQ(1, received_messages);
+    EXPECT_EQ(1, client->stop_calls);
+    EXPECT_EQ(1, close_callbacks);
+
+    // Cleanup is still valid when the current implementation has not automatically stopped.
+    transport->stop([](const std::exception_ptr&) {});
+}
+
+// A duplicate successful start callback while an aborted connection is still stopping must not request stop twice.
+TEST(websocket_transport_round6, repeated_successful_connect_completion_stops_client_once) {
+    auto client = std::make_shared<round6_websocket_client>();
+    client->defer_start = true;
+    client->defer_stop = true;
+    auto transport = make_round6_transport(client);
+
+    int start_callbacks = 0;
+    int stop_callbacks = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        EXPECT_NE(nullptr, error);
+        ++start_callbacks;
+    });
+    transport->stop([&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++stop_callbacks;
+    });
+
+    client->emit_start();
+    client->emit_start();
+    EXPECT_EQ(1, client->stop_calls);
+    EXPECT_EQ(1, start_callbacks);
+
+    client->emit_stop();
+    EXPECT_EQ(1, stop_callbacks);
+}
+
+// The transport may be destroyed while a prior explicit stop is awaiting backend completion.
+// A callback accepted by transport.stop() should not disappear solely because the transport was released.
+TEST(websocket_transport_round6, pending_stop_completion_survives_transport_destruction) {
+    auto client = std::make_shared<round6_websocket_client>();
+    client->defer_stop = true;
+    int completed_stops = 0;
+
+    {
+        auto transport = make_round6_transport(client);
+        transport->start("ws://example.test", [](const std::exception_ptr&) {});
+        transport->stop([&](const std::exception_ptr& error) {
+            EXPECT_EQ(nullptr, error);
+            ++completed_stops;
+        });
+        EXPECT_EQ(0, completed_stops);
+    }
+
+    client->emit_stop();
+    EXPECT_EQ(1, completed_stops);
+}
+
+// Defensive backend contract: once it has reported connection success, a subsequent synchronous throw from
+// start() must not silently turn a successful transport into a disconnected one without closing the socket.
+TEST(websocket_transport_round6, backend_throw_after_start_success_does_not_abandon_connection) {
+    auto client = std::make_shared<round6_websocket_client>();
+    client->throw_after_start_completion = true;
+    auto transport = make_round6_transport(client);
+
+    int starts = 0;
+    int sends = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++starts;
+    });
+    transport->send("payload", signalr::transfer_format::text, [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++sends;
+    });
+
+    EXPECT_EQ(1, starts);
+    EXPECT_EQ(1, sends);
+    EXPECT_EQ(1, client->send_calls);
+    transport->stop([](const std::exception_ptr&) {});
+}
+
+// Positive regression retained: a synchronous send completion can safely reenter stop().
+TEST(websocket_transport_round6, inline_send_completion_can_stop_transport) {
+    auto client = std::make_shared<round6_websocket_client>();
+    auto transport = make_round6_transport(client);
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    int send_callbacks = 0;
+    int stop_callbacks = 0;
+    transport->send("payload", signalr::transfer_format::text, [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++send_callbacks;
+        transport->stop([&](const std::exception_ptr& stop_error) {
+            EXPECT_EQ(nullptr, stop_error);
+            ++stop_callbacks;
+        });
+    });
+
+    EXPECT_EQ(1, send_callbacks);
+    EXPECT_EQ(1, stop_callbacks);
+    EXPECT_EQ(1, client->stop_calls);
+}
+
+// Positive regression: a normal stop need not wait for the underlying client to complete a pending receive.
+TEST(websocket_transport_round6, stop_completes_without_pending_receive_callback) {
+    auto client = std::make_shared<round6_websocket_client>();
+    auto transport = make_round6_transport(client);
+    transport->start("ws://example.test", [](const std::exception_ptr&) {});
+
+    int stop_callbacks = 0;
+    transport->stop([&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++stop_callbacks;
+    });
+
+    EXPECT_EQ(1, stop_callbacks);
+    EXPECT_EQ(1, client->stop_calls);
+}
+
+} // namespace websocket_transport_round6

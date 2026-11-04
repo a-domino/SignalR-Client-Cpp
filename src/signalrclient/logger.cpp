@@ -25,6 +25,8 @@ namespace signalr
     ) noexcept : m_log_writer(log_writer), m_trace_level(trace_level), m_log_entry_handler(std::move(log_entry_handler))
     { }
 
+    logger::logger(const logger& o) noexcept = default;
+
     void logger::log(const trace_level level, const std::string& entry) const
     {
         log(level, entry.data(), entry.length());

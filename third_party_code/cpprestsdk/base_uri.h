@@ -76,11 +76,12 @@ namespace signalr
     class uri_exception : public std::exception
     {
     public:
-        uri_exception(std::string msg) : m_msg(std::move(msg)) {}
+        explicit uri_exception(std::string msg) : m_msg(std::move(msg)) {}
+        uri_exception(const uri_exception& other) noexcept : m_msg(other.m_msg) {}
 
-        ~uri_exception() noexcept {}
+        ~uri_exception() noexcept override = default;
 
-        const char* what() const noexcept { return m_msg.c_str(); }
+        const char* what() const noexcept override { return m_msg.c_str(); }
 
     private:
         std::string m_msg;
@@ -379,7 +380,7 @@ namespace signalr
         /// Creates a URI from the given URI components.
         /// </summary>
         /// <param name="components">A URI components object to create the URI instance.</param>
-        uri(const details::uri_components& components);
+        explicit uri(details::uri_components components);
 
         // Used by uri_builder
         static std::string encode_query_impl(const std::string& raw);

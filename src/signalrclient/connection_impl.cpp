@@ -489,13 +489,10 @@ namespace signalr
                 {
                     if (disconnect_cts->is_canceled())
                     {
-                        if (logger.is_enabled(trace_level::info))
-                        {
-                            logger.logv(
-                                trace_level::info,
-                                "ignoring stray message received after connection was restarted. message: ", message
-                            );
-                        }
+                        logger.logv(
+                            trace_level::info,
+                            "ignoring stray message received after connection was restarted. message: ", message
+                        );
                         return;
                     }
 
@@ -521,15 +518,11 @@ namespace signalr
                     // it.
                     if (disconnect_cts->is_canceled())
                     {
-                        if (logger.is_enabled(trace_level::info))
-                        {
-                            logger.logv(
-                                trace_level::info,
-                                "ignoring stray error received after connection was restarted. error: ",
-                                e.what()
-                            );
-                        }
-
+                        logger.logv(
+                            trace_level::info,
+                            "ignoring stray error received after connection was restarted. error: ",
+                            e.what()
+                        );
                         return;
                     }
 

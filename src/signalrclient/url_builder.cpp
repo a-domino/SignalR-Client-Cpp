@@ -6,20 +6,14 @@
 #include "uri_builder.h"
 #include "signalrclient/transport_type.h"
 
-namespace signalr
-{
-    namespace url_builder
-    {
-        uri_builder &convert_to_websocket_url(uri_builder &builder, transport_type transport)
-        {
-            if (transport == transport_type::websockets)
-            {
-                if (builder.scheme() == "https")
-                {
+namespace signalr {
+    namespace url_builder {
+        uri_builder& convert_to_websocket_url(uri_builder& builder, transport_type transport) {
+            if (transport == transport_type::websockets) {
+                const auto& scheme = builder.scheme();
+                if (scheme == "https" || scheme == "wss") {
                     builder.set_scheme("wss");
-                }
-                else
-                {
+                } else {
                     builder.set_scheme("ws");
                 }
             }
@@ -27,32 +21,35 @@ namespace signalr
             return builder;
         }
 
-        uri_builder build_uri(const std::string& base_url, const std::string& command, const std::string& query_string)
-        {
+        uri_builder build_uri(const std::string& base_url, const std::string& command, const std::string& query_string) {
             uri_builder builder(base_url);
-            builder.append_path(command);
-            return builder.append_query(query_string);
+            if (!command.empty()) {
+                builder.append_path(command);
+            }
+            if (!query_string.empty()) {
+                builder.append_query(query_string);
+            }
+            return builder;
         }
 
-        uri_builder build_uri(const std::string& base_url, const std::string& command)
-        {
-            uri_builder builder(base_url);
-            return builder.append_path(command);
+        uri_builder build_uri(const std::string& base_url, const std::string& command) {
+            return build_uri(base_url, command, "");
         }
 
-        std::string build_negotiate(const std::string& base_url)
-        {
+        std::string build_negotiate(const std::string& base_url) {
             return build_uri(base_url, "negotiate").to_string();
         }
 
-        std::string build_connect(const std::string& base_url, transport_type transport, const std::string& query_string)
-        {
+        std::string build_connect(
+            const std::string& base_url,
+            transport_type transport,
+            const std::string& query_string
+        ) {
             auto builder = build_uri(base_url, "", query_string);
             return convert_to_websocket_url(builder, transport).to_string();
         }
 
-        std::string add_query_string(const std::string& base_url, const std::string& query_string)
-        {
+        std::string add_query_string(const std::string& base_url, const std::string& query_string) {
             uri_builder builder(base_url);
             return builder.append_query(query_string).to_string();
         }

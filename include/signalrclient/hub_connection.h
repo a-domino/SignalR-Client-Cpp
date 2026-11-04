@@ -32,11 +32,6 @@ namespace signalr
     class hub_connection
     {
     public:
-        enum class stop_type {
-            stop_on_close_error,
-            continue_on_close_error
-        };
-
         SIGNALRCLIENT_API ~hub_connection();
 
         hub_connection(const hub_connection&) = delete;
@@ -51,7 +46,6 @@ namespace signalr
         SIGNALRCLIENT_API void __cdecl stop(
             const std::function<void(const std::exception_ptr&)>& callback,
             std::chrono::milliseconds send_stop_msg_timeout = std::chrono::seconds(5),
-            stop_type stop_type = stop_type::continue_on_close_error,
             const std::exception_ptr& reason = nullptr
         ) const noexcept;
 

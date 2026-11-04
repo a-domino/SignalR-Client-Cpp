@@ -15,7 +15,10 @@
 #include <deque>
 #include <iomanip>
 #include <sstream>
+#include <stdafx.h>
 #include <utility>
+
+#include "json_hub_protocol.h"
 
 using namespace signalr;
 
@@ -1318,9 +1321,9 @@ TEST(invoke, callback_not_called_if_send_throws)
     }
 
     hub_connection.stop([&mre](const std::exception_ptr& exception)
-                        {
-                            mre.set(exception);
-                        }
+        {
+            mre.set(exception);
+        }
     );
 
     mre.get();
@@ -1416,10 +1419,12 @@ TEST(invoke, unblocks_task_when_server_completes_call)
 
     mre.get();
 
-    hub_connection.invoke("method", std::vector<signalr::value>(), [&mre](signalr::value&&, const std::exception_ptr& exception)
-    {
-        mre.set(exception);
-    });
+    hub_connection.invoke(
+        "method", std::vector<signalr::value>(),
+        [&mre](signalr::value&&, const std::exception_ptr& exception){
+            mre.set(exception);
+        }
+    );
 
     websocket_client->receive_message("{ \"type\": 3, \"invocationId\": \"0\" }\x1e");
 
@@ -1549,9 +1554,9 @@ TEST(connection_id, can_get_connection_id)
     auto connection_id = hub_connection.get_connection_id();
 
     hub_connection.stop([&mre](const std::exception_ptr& exception)
-                        {
-                            mre.set(exception);
-                        }
+        {
+            mre.set(exception);
+        }
     );
 
     mre.get();
@@ -1645,7 +1650,7 @@ TEST(invoke, send_throws_when_the_underlying_connection_is_not_valid)
     auto hub_connection = create_hub_connection();
 
     auto mre = manual_reset_event<void>();
-    hub_connection.invoke("method", std::vector<signalr::value>(), [&mre](const signalr::value&, const std::exception_ptr& exception)
+    hub_connection.send("method", std::vector<signalr::value>(), [&mre](const std::exception_ptr& exception)
     {
         mre.set(exception);
     });
@@ -1820,9 +1825,9 @@ TEST(config, can_replace_scheduler)
     invoke_mre.get();
 
     hub_connection.stop([&mre](const std::exception_ptr&)
-                        {
-                            mre.set();
-                        }
+        {
+            mre.set();
+        }
     );
 
     mre.get();
@@ -2175,4 +2180,526 @@ TEST(receive, unknown_message_type_closes_connection)
     {
         ASSERT_STREQ("unknown message type '100' received", ex.what());
     }
+}
+
+// 1. Fix the copy-paste bug in the original send test
+TEST(send, send_throws_when_the_underlying_connection_is_not_valid)
+{
+    auto hub_connection = create_hub_connection();
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.send("method", std::vector<signalr::value>(), [&mre](const std::exception_ptr& exception)
+    {
+        mre.set(exception);
+    });
+
+    try
+    {
+        mre.get();
+        ASSERT_TRUE(false);
+    }
+    catch (const signalr_exception& e)
+    {
+        ASSERT_STREQ("cannot send data when the connection is not in the connected state. current connection state: disconnected", e.what());
+    }
+}
+
+// 2. Test stream initiation and message formatting
+TEST(stream, stream_creates_correct_payload)
+{
+    std::string payload;
+    bool handshakeReceived = false;
+
+    auto websocket_client = create_test_websocket_client(
+        [&payload, &handshakeReceived](const std::string& m, const std::function<void(const std::exception_ptr&)>& callback)
+        {
+            if (handshakeReceived)
+            {
+                payload = m;
+                callback(nullptr);
+                return;
+            }
+            handshakeReceived = true;
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    auto stream_sent_mre = manual_reset_event<void>();
+    hub_connection.stream(
+        "StreamNumbers", { value(10.0) },
+        [&stream_sent_mre](const std::shared_ptr<cancel_stream_interface>&) { stream_sent_mre.set(); },
+        [](signalr::value&&) {},
+        [](signalr::value&&, const std::exception_ptr&) {}
+    );
+
+    stream_sent_mre.get();
+    ASSERT_EQ("{\"arguments\":[10],\"invocationId\":\"0\",\"target\":\"StreamNumbers\",\"type\":4}\x1e", payload);
+}
+
+// 3. Test receiving stream items and handling stream completion
+TEST(stream, stream_receives_items_and_completes)
+{
+    auto websocket_client = create_test_websocket_client();
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    std::vector<std::string> received_items;
+    auto item_mre = manual_reset_event<void>();
+    auto complete_mre = manual_reset_event<void>();
+
+    hub_connection.stream(
+        "StreamData", {},
+        [](const std::shared_ptr<cancel_stream_interface>&) {},
+        [&received_items, &item_mre](signalr::value&& item)
+        {
+            received_items.push_back(item.as_string());
+            if (received_items.size() == 2)
+            {
+                item_mre.set();
+            }
+        },
+        [&complete_mre](signalr::value&&, const std::exception_ptr& exception)
+        {
+            complete_mre.set(exception);
+        }
+    );
+
+    // Send two stream items followed by a completion message
+    websocket_client->receive_message("{\"type\":2,\"invocationId\":\"0\",\"item\":\"alpha\"}\x1e");
+    websocket_client->receive_message("{\"type\":2,\"invocationId\":\"0\",\"item\":\"beta\"}\x1e");
+
+    item_mre.get();
+    ASSERT_EQ(2, received_items.size());
+    ASSERT_EQ("alpha", received_items[0]);
+    ASSERT_EQ("beta", received_items[1]);
+
+    websocket_client->receive_message("{\"type\":3,\"invocationId\":\"0\"}\x1e");
+    complete_mre.get();
+}
+
+// 4. Test stream cancellation
+TEST(stream, stream_can_be_cancelled)
+{
+    std::string cancel_payload;
+    bool cancel_received = false;
+
+    auto websocket_client = create_test_websocket_client(
+        [&cancel_payload, &cancel_received](const std::string& m, const std::function<void(const std::exception_ptr&)>& callback)
+        {
+            if (m.find("\"type\":5") != std::string::npos)
+            {
+                cancel_payload = m;
+                cancel_received = true;
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    std::shared_ptr<cancel_stream_interface> stream_canceller;
+    auto stream_ready_mre = manual_reset_event<void>();
+
+    hub_connection.stream(
+        "StreamData", {},
+        [&stream_canceller, &stream_ready_mre](std::shared_ptr<cancel_stream_interface> canceller)
+        {
+            stream_canceller = std::move(canceller);
+            stream_ready_mre.set();
+        },
+        [](signalr::value&&) {},
+        [](signalr::value&&, const std::exception_ptr&) {}
+    );
+
+    stream_ready_mre.get();
+    ASSERT_NE(nullptr, stream_canceller);
+
+    auto cancel_done_mre = manual_reset_event<void>();
+    stream_canceller->cancel([&cancel_done_mre](const std::exception_ptr& exception)
+    {
+        cancel_done_mre.set(exception);
+    });
+
+    cancel_done_mre.get();
+    ASSERT_TRUE(cancel_received);
+    ASSERT_EQ("{\"invocationId\":\"0\",\"type\":5}\x1e", cancel_payload);
+}
+
+// 5. Test client sending completion response on method returning value
+TEST(hub_invocation, invocation_with_return_value_sends_completion)
+{
+    std::string completion_payload;
+    auto completion_mre = manual_reset_event<void>();
+
+    auto websocket_client = create_test_websocket_client(
+        [&completion_payload, &completion_mre](const std::string& m, const std::function<void(const std::exception_ptr&)>& callback)
+        {
+            if (m.find("\"type\":3") != std::string::npos)
+            {
+                completion_payload = m;
+                completion_mre.set();
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    // Register handler returning a signalr::value
+    hub_connection.on("Add", [](const std::vector<signalr::value>& args) -> signalr::value
+    {
+        return {args[0].as_double() + args[1].as_double()};
+    });
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Server calls client method with invocationId "42"
+    websocket_client->receive_message("{\"type\":1,\"invocationId\":\"42\",\"target\":\"Add\",\"arguments\":[10,5]}\x1e");
+
+    completion_mre.get();
+    ASSERT_EQ("{\"invocationId\":\"42\",\"result\":15,\"type\":3}\x1e", completion_payload);
+}
+
+// 6. Test client sending error completion when method handler throws
+TEST(hub_invocation, invocation_throwing_exception_sends_error_completion)
+{
+    std::string completion_payload;
+    auto completion_mre = manual_reset_event<void>();
+
+    auto websocket_client = create_test_websocket_client(
+        [&completion_payload, &completion_mre](const std::string& m, const std::function<void(const std::exception_ptr&)>& callback)
+        {
+            if (m.find("\"type\":3") != std::string::npos)
+            {
+                completion_payload = m;
+                completion_mre.set();
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    hub_connection.on("FailMethod", [](const std::vector<signalr::value>&) -> signalr::value
+    {
+        throw std::runtime_error("Calculation error");
+    });
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    websocket_client->receive_message("{\"type\":1,\"invocationId\":\"99\",\"target\":\"FailMethod\",\"arguments\":[]}\x1e");
+
+    completion_mre.get();
+    ASSERT_EQ("{\"error\":\"Calculation error\",\"invocationId\":\"99\",\"type\":3}\x1e", completion_payload);
+}
+
+// 7. Test server close message shuts down connection
+TEST(close, server_close_message_disconnects_client)
+{
+    auto websocket_client = create_test_websocket_client();
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    auto disconnect_mre = manual_reset_event<void>();
+    hub_connection.set_disconnected([&disconnect_mre](const std::exception_ptr& ex)
+    {
+        disconnect_mre.set(ex);
+    });
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& exception) { mre.set(exception); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Server sends close message
+    websocket_client->receive_message("{\"type\":7,\"error\":\"Server shutting down\",\"allowReconnect\":false}\x1e");
+
+    try
+    {
+        disconnect_mre.get();
+        ASSERT_TRUE(false);
+    }
+    catch (const signalr_exception& ex)
+    {
+        ASSERT_STREQ("Close Message Received", ex.what());
+    }
+
+    ASSERT_EQ(connection_state::disconnected, hub_connection.get_connection_state());
+}
+TEST(same_thread_message_handler, stream_invocation_returns_not_supported_error)
+{
+    std::string sent_payload;
+    auto completion_mre = manual_reset_event<void>();
+
+    auto websocket_client = create_test_websocket_client(
+        [&sent_payload, &completion_mre](const std::string& msg, const std::function<void(std::exception_ptr)>& callback)
+        {
+            if (msg.find("\"type\":3") != std::string::npos)
+            {
+                sent_payload = msg;
+                completion_mre.set();
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Server sends StreamInvocation (type 4)
+    websocket_client->receive_message("{\"type\":4,\"invocationId\":\"stream_123\",\"target\":\"ClientStream\",\"arguments\":[]}\x1e");
+
+    completion_mre.get();
+
+    // Client must return an error completion indicating Client->Server streaming is unsupported
+    ASSERT_EQ("{\"error\":\"Client->Server Streaming not currently supported.\",\"invocationId\":\"stream_123\",\"type\":3}\x1e", sent_payload);
+}
+
+TEST(same_thread_message_handler, missing_handler_with_invocation_id_returns_error)
+{
+    std::string sent_payload;
+    auto completion_mre = manual_reset_event<void>();
+
+    auto websocket_client = create_test_websocket_client(
+        [&sent_payload, &completion_mre](const std::string& msg, const std::function<void(std::exception_ptr)>& callback)
+        {
+            if (msg.find("\"type\":3") != std::string::npos)
+            {
+                sent_payload = msg;
+                completion_mre.set();
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Invoke a method that was never registered on the client, with an invocationId
+    websocket_client->receive_message("{\"type\":1,\"invocationId\":\"inv_789\",\"target\":\"NonExistentMethod\",\"arguments\":[]}\x1e");
+
+    completion_mre.get();
+
+    ASSERT_EQ("{\"error\":\"handler not found\",\"invocationId\":\"inv_789\",\"type\":3}\x1e", sent_payload);
+}
+
+TEST(same_thread_message_handler, missing_handler_without_invocation_id_sends_no_response)
+{
+    bool sent_anything = false;
+
+    auto websocket_client = create_test_websocket_client(
+        [&sent_anything](const std::string& msg, const std::function<void(std::exception_ptr)>& callback)
+        {
+            if (msg.find("\"type\":3") != std::string::npos)
+            {
+                sent_anything = true;
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Broadcast invocation for unknown method (empty invocationId)
+    websocket_client->receive_message("{\"type\":1,\"target\":\"NonExistentBroadcast\",\"arguments\":[\"hello\"]}\x1e");
+
+    // Send a ping to synchronize processing
+    websocket_client->receive_message("{\"type\":6}\x1e");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_FALSE(sent_anything);
+}
+
+TEST(same_thread_message_handler, void_handler_with_invocation_id_sends_void_completion)
+{
+    std::string sent_payload;
+    auto completion_mre = manual_reset_event<void>();
+
+    auto websocket_client = create_test_websocket_client(
+        [&sent_payload, &completion_mre](const std::string& msg, const std::function<void(std::exception_ptr)>& callback)
+        {
+            if (msg.find("\"type\":3") != std::string::npos)
+            {
+                sent_payload = msg;
+                completion_mre.set();
+            }
+            callback(nullptr);
+        });
+
+    auto hub_connection = create_hub_connection(websocket_client);
+    bool handler_called = false;
+
+    hub_connection.on("VoidAction", [&handler_called](const std::vector<signalr::value>&)
+    {
+        handler_called = true;
+    });
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Server invokes void method with an invocationId
+    websocket_client->receive_message("{\"type\":1,\"invocationId\":\"void_1\",\"target\":\"VoidAction\",\"arguments\":[]}\x1e");
+
+    completion_mre.get();
+
+    ASSERT_TRUE(handler_called);
+    // Void completion has only invocationId and type 3 (no result or error keys)
+    ASSERT_EQ("{\"invocationId\":\"void_1\",\"type\":3}\x1e", sent_payload);
+}
+
+TEST(same_thread_message_handler, cancel_invocation_message_is_safely_ignored)
+{
+    auto websocket_client = create_test_websocket_client();
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Cancel invocation (type 5) should be logged as debug and ignored
+    websocket_client->receive_message("{\"type\":5,\"invocationId\":\"cancel_99\"}\x1e");
+
+    // Verify connection remains unaffected and connected
+    ASSERT_EQ(connection_state::connected, hub_connection.get_connection_state());
+}
+
+TEST(same_thread_message_handler, ack_and_sequence_messages_are_safely_ignored)
+{
+    auto websocket_client = create_test_websocket_client();
+    auto hub_connection = create_hub_connection(websocket_client);
+
+    auto mre = manual_reset_event<void>();
+    hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+    ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+    ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+    websocket_client->receive_message("{ }\x1e");
+    mre.get();
+
+    // Ack (type 8) and Sequence (type 9)
+    websocket_client->receive_message("{\"type\":8,\"sequenceId\":1001}\x1e");
+    websocket_client->receive_message("{\"type\":9,\"sequenceId\":1002}\x1e");
+
+    ASSERT_EQ(connection_state::connected, hub_connection.get_connection_state());
+}
+
+TEST(same_thread_message_handler, messages_ignored_if_hub_connection_is_already_destructed)
+{
+    std::shared_ptr<message_handler> retained_handler;
+    // ReSharper disable once CppTooWideScope
+    // ReSharper disable once CppJoinDeclarationAndAssignment
+    // ReSharper disable once CppEntityAssignedButNoRead
+    std::unique_ptr<hub_protocol::parser_and_handler> parser; // testing scope related things
+
+    {
+        auto websocket_client = create_test_websocket_client();
+        auto hub_connection = create_hub_connection(websocket_client);
+
+        auto mre = manual_reset_event<void>();
+        hub_connection.start([&mre](const std::exception_ptr& ex) { mre.set(ex); });
+
+        ASSERT_FALSE(websocket_client->receive_loop_started.wait(5000));
+        ASSERT_FALSE(websocket_client->handshake_sent.wait(5000));
+        websocket_client->receive_message("{ }\x1e");
+        mre.get();
+
+        // Create a standalone parser linked to the handler via an artificial dummy protocol
+        // to hold a reference past hub_connection_impl's destruction
+        class mock_capture_protocol : public test_hub_protocol_base
+        {
+        public:
+            mutable std::shared_ptr<message_handler> captured_handler;
+            std::unique_ptr<parser_and_handler> create_parser_and_handler(
+                const std::shared_ptr<message_handler>& handler) const override
+            {
+                captured_handler = handler;
+                return json_hub_protocol().create_parser_and_handler(handler);
+            }
+        };
+
+        auto capture_proto = new mock_capture_protocol();
+        auto custom_conn = hub_connection_impl::create(
+            "", std::unique_ptr<hub_protocol>(capture_proto), trace_level::none,
+            nullptr, nullptr, nullptr,
+            [](const signalr_client_config&) { return create_test_websocket_client(); },
+            true
+        );
+
+        retained_handler = capture_proto->captured_handler;
+        parser = capture_proto->create_parser_and_handler(retained_handler);
+
+        // custom_conn goes out of scope and is destroyed here
+    }
+
+    // Now hub_connection_impl is gone; m_hub_conn_impl.lock() yields nullptr.
+    // Ensure dispatching every message type through retained_handler safely no-ops without crashing.
+    ASSERT_NO_THROW({
+        retained_handler->handle_invocation_message(invocation_message("1", "test", {}));
+        retained_handler->handle_stream_item_message(stream_item_message("1", value("data")));
+        retained_handler->handle_completion_message(completion_message("1", "", value(), completion_message::result_kind::void_result));
+        retained_handler->handle_stream_invocation_message(stream_invocation_message("1", "stream", {}));
+        retained_handler->handle_cancel_invocation_message(cancel_invocation_message("1"));
+        retained_handler->handle_ping_message(ping_message{});
+        retained_handler->handle_close_message(close_message{"error", false});
+        retained_handler->handle_ack_message(ack_message{1});
+        retained_handler->handle_sequence_message(sequence_message{1});
+    });
 }

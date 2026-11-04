@@ -27,40 +27,6 @@ stages:
   jobs:
   - template: .azure/default-build.yml
     parameters:
-      agentOs: Windows
-      jobName: Windows_Build_Test_With_CppRestSDK
-      useCppRestSDK: true
-      cMakeRunArgs: '-A x64 -DVCPKG_MANIFEST_FEATURES=cpprestsdk'
-      beforeBuild:
-      - powershell: |
-          $root = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $env:VCPKG_INSTALLATION_ROOT }
-          Write-Host "##vso[task.setvariable variable=VCPKG_ROOT]$root"
-        displayName: Set VCPKG_ROOT
-
-  - template: .azure/default-build.yml
-    parameters:
-      agentOs: macOs
-      jobName: Mac_Build_Test_With_CppRestSDK
-      useCppRestSDK: true
-      cMakeRunArgs: '-DVCPKG_MANIFEST_FEATURES=cpprestsdk'
-      beforeBuild:
-      - bash: echo "##vso[task.setvariable variable=VCPKG_ROOT]$VCPKG_INSTALLATION_ROOT"
-        displayName: Set VCPKG_ROOT
-
-  - template: .azure/default-build.yml
-    parameters:
-      agentOs: Linux
-      jobName: Linux_Build_Test_With_CppRestSDK
-      useCppRestSDK: true
-      cMakeRunArgs: '-DVCPKG_MANIFEST_FEATURES=cpprestsdk'
-      beforeBuild:
-      - bash: echo "##vso[task.setvariable variable=VCPKG_ROOT]$VCPKG_INSTALLATION_ROOT"
-        displayName: Set VCPKG_ROOT
-      - bash: "sudo apt-get update && sudo apt install valgrind"
-        displayName: install valgrind
-
-  - template: .azure/default-build.yml
-    parameters:
       agentOs: Linux
       jobName: Linux_Build_Test
       useCppRestSDK: false

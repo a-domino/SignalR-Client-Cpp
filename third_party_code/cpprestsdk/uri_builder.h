@@ -11,12 +11,14 @@
  * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
  ****/
 
-// Copied and modified slightly from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/include/cpprest/uri_builder.h
+// Copied and modified from https://github.com/microsoft/cpprestsdk/blob/fd6aa00c18a7fb8dbe957175078f02346775045a/Release/include/cpprest/uri_builder.h
 
 #pragma once
 
 #include "base_uri.h"
 #include <string>
+#include <sstream>
+#include <locale>
 
 namespace signalr
 {
@@ -84,8 +86,7 @@ namespace signalr
         /// </summary>
         /// <param name="scheme">Uri scheme.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_scheme(const std::string& scheme)
-        {
+        uri_builder& set_scheme(const std::string& scheme) {
             m_uri.m_scheme = scheme;
             return *this;
         }
@@ -96,17 +97,10 @@ namespace signalr
         /// <param name="user_info">User info as a decoded string.</param>
         /// <param name="do_encoding">Specify whether to apply URI encoding to the given string.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_user_info(const std::string& user_info, bool do_encoding = false)
-        {
-            if (do_encoding)
-            {
-                m_uri.m_user_info = uri::encode_uri(user_info, uri::components::user_info);
-            }
-            else
-            {
-                m_uri.m_user_info = user_info;
-            }
-
+        uri_builder& set_user_info(const std::string& user_info, bool do_encoding = false) {
+            m_uri.m_user_info = do_encoding
+                ? uri::encode_uri(user_info, uri::components::user_info)
+                : user_info;
             return *this;
         }
 
@@ -116,17 +110,10 @@ namespace signalr
         /// <param name="host">Host as a decoded string.</param>
         /// <param name="do_encoding">Specify whether to apply URI encoding to the given string.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_host(const std::string& host, bool do_encoding = false)
-        {
-            if (do_encoding)
-            {
-                m_uri.m_host = uri::encode_uri(host, uri::components::host);
-            }
-            else
-            {
-                m_uri.m_host = host;
-            }
-
+        uri_builder& set_host(const std::string& host, bool do_encoding = false) {
+            m_uri.m_host = do_encoding
+                ? uri::encode_uri(host, uri::components::host)
+                : host;
             return *this;
         }
 
@@ -135,8 +122,7 @@ namespace signalr
         /// </summary>
         /// <param name="port">Port as an integer.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_port(int port)
-        {
+        uri_builder& set_port(int port) {
             m_uri.m_port = port;
             return *this;
         }
@@ -155,17 +141,10 @@ namespace signalr
         /// <param name="path">Path as a decoded string.</param>
         /// <param name="do_encoding">Specify whether to apply URI encoding to the given string.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_path(const std::string& path, bool do_encoding = false)
-        {
-            if (do_encoding)
-            {
-                m_uri.m_path = uri::encode_uri(path, uri::components::path);
-            }
-            else
-            {
-                m_uri.m_path = path;
-            }
-
+        uri_builder& set_path(const std::string& path, bool do_encoding = false) {
+            m_uri.m_path = do_encoding
+                ? uri::encode_uri(path, uri::components::path)
+                : path;
             return *this;
         }
 
@@ -175,17 +154,10 @@ namespace signalr
         /// <param name="query">Query as a decoded string.</param>
         /// <param name="do_encoding">Specify whether apply URI encoding to the given string.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_query(const std::string& query, bool do_encoding = false)
-        {
-            if (do_encoding)
-            {
-                m_uri.m_query = uri::encode_uri(query, uri::components::query);
-            }
-            else
-            {
-                m_uri.m_query = query;
-            }
-
+        uri_builder& set_query(const std::string& query, bool do_encoding = false) {
+            m_uri.m_query = do_encoding
+                ? uri::encode_uri(query, uri::components::query)
+                : query;
             return *this;
         }
 
@@ -195,17 +167,10 @@ namespace signalr
         /// <param name="fragment">Fragment as a decoded string.</param>
         /// <param name="do_encoding">Specify whether to apply URI encoding to the given string.</param>
         /// <returns>A reference to this <c>uri_builder</c> to support chaining.</returns>
-        uri_builder& set_fragment(const std::string& fragment, bool do_encoding = false)
-        {
-            if (do_encoding)
-            {
-                m_uri.m_fragment = uri::encode_uri(fragment, uri::components::fragment);
-            }
-            else
-            {
-                m_uri.m_fragment = fragment;
-            }
-
+        uri_builder& set_fragment(const std::string& fragment, bool do_encoding = false) {
+            m_uri.m_fragment = do_encoding
+                ? uri::encode_uri(fragment, uri::components::fragment)
+                : fragment;
             return *this;
         }
 
@@ -259,12 +224,15 @@ namespace signalr
         /// <param name="value">The value portion of the query string</param>
         /// <returns>A reference to this uri_builder to support chaining.</returns>
         template<typename T>
-        uri_builder& append_query(const std::string& name, const T& value, bool do_encoding = true)
-        {
-            if (do_encoding)
-                append_query_encode_impl(name, value);
-            else
-                append_query_no_encode_impl(name, value);
+        uri_builder& append_query(const std::string& name, const T& value, bool do_encoding = true) {
+            std::ostringstream ss;
+            ss.imbue(std::locale::classic());
+            ss << value;
+            if (do_encoding) {
+                append_query_encode_impl(name, ss.str());
+            } else {
+                append_query_no_encode_impl(name, ss.str());
+            }
             return *this;
         }
 
