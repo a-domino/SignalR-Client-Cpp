@@ -10,7 +10,7 @@ namespace signalr
 {
     class cancel_stream_interface {
     public:
-        virtual void cancel(const std::function<void(const std::exception_ptr&)>& callback);
+        virtual void cancel(const std::function<void(const std::exception_ptr&)>& callback) = 0;
         virtual ~cancel_stream_interface() = default;
     };
 }

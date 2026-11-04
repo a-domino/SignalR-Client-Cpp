@@ -29,6 +29,12 @@ namespace signalr
     class hub_connection_impl : public std::enable_shared_from_this<hub_connection_impl>
     {
     public:
+        enum class stop_type {
+            stop_on_close_error,
+            continue_on_close_error,
+            destructor
+        };
+
         static std::shared_ptr<hub_connection_impl> create(
             const std::string& url, std::unique_ptr<hub_protocol>&& hub_protocol, trace_level trace_level,
             const std::shared_ptr<log_writer>& log_writer, const log_entry_handler& log_entry_handler,
@@ -43,6 +49,7 @@ namespace signalr
         virtual ~hub_connection_impl();
 
         void on(const std::string& event_name, const method_invoked_handler& handler);
+        void on(const std::string& event_name, const void_method_invoked_handler& handler);
 
         void invoke(
             const std::string& method_name, const std::vector<value>& arguments,
@@ -55,7 +62,7 @@ namespace signalr
 
         void stream(
             const std::string& method_name, const std::vector<signalr::value>& arguments,
-            const std::function<void(std::unique_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
+            const std::function<void(std::shared_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
             const std::function<void(signalr::value&&)>& handle_item_callback,
             const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
         );
@@ -63,7 +70,9 @@ namespace signalr
         void start(const std::function<void(std::exception_ptr)>& callback) noexcept;
         void stop(
             const std::function<void(const std::exception_ptr&)>& callback,
-            const std::exception_ptr& reason = nullptr, bool is_dtor = false
+            std::chrono::milliseconds send_stop_msg_timeout = std::chrono::seconds(5),
+            stop_type stop_type = stop_type::continue_on_close_error,
+            const std::exception_ptr& reason = nullptr
         ) noexcept;
 
         connection_state get_connection_state() const noexcept;
@@ -108,11 +117,14 @@ namespace signalr
             std::weak_ptr<hub_connection_impl> m_hub_conn_impl;
         };
 
-        class cancel_stream : public cancel_stream_interface {
+        class cancel_stream : public cancel_stream_interface
+                            , public std::enable_shared_from_this<cancel_stream> {
         public:
             cancel_stream(
                 const std::weak_ptr<hub_connection_impl>& hub, std::string callback_id
-            ) : m_hub(hub), m_invocation_id(std::move(callback_id))
+            ) : m_hub(hub)
+              , m_invocation_id(std::move(callback_id))
+              , m_stop_callbacks{std::make_shared<std::vector<std::function<void(const std::exception_ptr&)>>>()}
             {}
 
             void cancel(const std::function<void(const std::exception_ptr&)>& callback) override;
@@ -122,6 +134,10 @@ namespace signalr
         private:
             std::weak_ptr<hub_connection_impl> m_hub;
             const std::string m_invocation_id;
+
+            std::shared_ptr<std::vector<std::function<void(const std::exception_ptr&)>>> m_stop_callbacks;
+            bool m_cancel_sent = false;
+            std::mutex m_mutex;
         };
 
         std::shared_ptr<connection_impl> m_connection;
@@ -144,6 +160,8 @@ namespace signalr
 
         std::mutex m_stop_callback_lock;
         std::vector<std::function<void(std::exception_ptr)>> m_stop_callbacks;
+
+        std::weak_ptr<hub_connection_impl> m_weak_this;
 
         void initialize();
         void stop_connection(const std::exception_ptr& reason = nullptr) noexcept;

@@ -36,15 +36,8 @@ namespace {
 }
 
 static void pack_string(msgpack::packer<string_wrapper>& packer, const std::string& str) {
-    if (str.empty())
-    {
-        packer.pack_nil();
-    }
-    else
-    {
-        packer.pack_str(static_cast<uint32_t>(str.length()));
-        packer.pack_str_body(str.data(), static_cast<uint32_t>(str.length()));
-    }
+    packer.pack_str(static_cast<uint32_t>(str.length()));
+    packer.pack_str_body(str.data(), static_cast<uint32_t>(str.length()));
 }
 
 static void pack_signalr_value(const signalr::value& v, msgpack::packer<string_wrapper>& packer) {
@@ -145,7 +138,7 @@ static std::string write_invocation_msg(const invocation_type* invocation) {
     msgpack::packer<string_wrapper> packer(str);
     packer.pack_array(6);
 
-    packer.pack_int(static_cast<int>(signalr::message_type::invocation));
+    packer.pack_int(static_cast<int>(invocation_type::msg_type));
     // Headers
     packer.pack_map(0);
 
@@ -230,39 +223,6 @@ namespace signalr
         case msgpack::type::object_type::NIL:
         default:
             return {};
-        }
-    }
-
-#define WRITE_MESSAGE(hub_message_type, hub_message) \
-    write_ ## hub_message_type(static_cast<hub_message_type const*>(hub_message))
-
-    template <signalr::message_type message_type>
-    std::string messagepack_hub_protocol::write_message(const hub_message<message_type> *const hub_message) const {
-        switch (message_type) {
-        case signalr::message_type::invocation:
-            return std::move(WRITE_MESSAGE(invocation_message, hub_message));
-        case signalr::message_type::stream_item:
-            return std::move(WRITE_MESSAGE(stream_item_message, hub_message));
-        case signalr::message_type::completion:
-            return std::move(WRITE_MESSAGE(completion_message, hub_message));
-        case signalr::message_type::stream_invocation:
-            return std::move(WRITE_MESSAGE(stream_invocation_message, hub_message));
-        case signalr::message_type::cancel_invocation:
-            return std::move(WRITE_MESSAGE(cancel_invocation_message, hub_message));
-        case signalr::message_type::ping:
-            return std::move(WRITE_MESSAGE(ping_message, hub_message));
-        case signalr::message_type::close:
-            return std::move(WRITE_MESSAGE(close_message, hub_message));
-        case signalr::message_type::ack:
-            return std::move(WRITE_MESSAGE(ack_message, hub_message));
-        case signalr::message_type::sequence:
-            return std::move(WRITE_MESSAGE(sequence_message, hub_message));
-        default:
-            string_wrapper str;
-            // ReSharper disable once CppDeclaratorNeverUsed
-            msgpack::packer<string_wrapper> packer(str); // done for side-effects...
-            binary_message_formatter::write_length_prefix(str.str);
-            return std::move(str.str);
         }
     }
 
@@ -607,7 +567,6 @@ namespace signalr
                 // Item
                 signalr::value item = createValue(*msgpack_obj_index);
 
-
                 m_message_handler->handle_stream_item_message(
                     std::move(stream_item_message(std::move(invocation_id), std::move(item)))
                 );
@@ -626,7 +585,7 @@ namespace signalr
                 // InvocationId
                 if (msgpack_obj_index->type != msgpack::type::STR)
                 {
-                    throw signalr_exception("reading stream item message 'invocationId' as string failed");
+                    throw signalr_exception("reading cancel invocation message 'invocationId' as string failed");
                 }
                 std::string invocation_id(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
 
@@ -642,12 +601,12 @@ namespace signalr
                     throw signalr_exception("close message has too few properties");
                 }
 
-                // Error
-                if (msgpack_obj_index->type != msgpack::type::STR)
+                // Error (optional in JSON encoding spec, so ignore if not string)
+                std::string error;
+                if (msgpack_obj_index->type == msgpack::type::STR)
                 {
-                    throw signalr_exception("reading stream item message 'invocationId' as string failed");
+                    error = std::move(std::string(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size));
                 }
-                std::string error(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
 
                 bool allow_reconnect = false;
                 if (num_elements_of_message > 2) {
@@ -672,10 +631,8 @@ namespace signalr
                         allow_reconnect = msgpack_obj_index->via.boolean;
                         break;
                     case msgpack::type::POSITIVE_INTEGER:
-                        allow_reconnect = msgpack_obj_index->via.i64 != 0;
-                        break;
                     case msgpack::type::NEGATIVE_INTEGER:
-                        allow_reconnect = msgpack_obj_index->via.u64 != 0;
+                        allow_reconnect = msgpack_obj_index->via.i64 != 0;
                         break;
                     case msgpack::type::FLOAT32:
                     case msgpack::type::FLOAT64:
@@ -718,13 +675,14 @@ namespace signalr
                     throw signalr_exception("ack message has too few properties");
                 }
 
-                int64_t sequency_id = 0;
+                int64_t sequence_id = 0;
                 switch (msgpack_obj_index->type) {
                 case msgpack::type::STR:
                     {
                         std::string invocation_id_str(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
                         try {
-                            sequency_id = std::stoll(invocation_id_str);
+                            sequence_id = std::stoll(invocation_id_str);
+                            break;
                         } catch (...) {
                             throw signalr_exception("ack message's SequenceId str isn't an int");
                         }
@@ -732,15 +690,15 @@ namespace signalr
                 case msgpack::type::NIL:
                     break;
                 case msgpack::type::BOOLEAN:
-                    sequency_id = msgpack_obj_index->via.boolean ? 1 : 0;
+                    sequence_id = msgpack_obj_index->via.boolean ? 1 : 0;
                     break;
                 case msgpack::type::POSITIVE_INTEGER:
                 case msgpack::type::NEGATIVE_INTEGER:
-                    sequency_id = msgpack_obj_index->via.i64;
+                    sequence_id = msgpack_obj_index->via.i64;
                     break;
                 case msgpack::type::FLOAT32:
                 case msgpack::type::FLOAT64:
-                    sequency_id = static_cast<int64_t>(msgpack_obj_index->via.f64);
+                    sequence_id = static_cast<int64_t>(msgpack_obj_index->via.f64);
                     break;
                 case msgpack::type::BIN:
                     throw signalr_exception("Can't parse ack message's SequenceId str from binary");
@@ -761,23 +719,24 @@ namespace signalr
                     );
                 }
 
-                m_message_handler->handle_ack_message(std::move(ack_message(sequency_id)));
+                m_message_handler->handle_ack_message(std::move(ack_message(sequence_id)));
                 break;
             }
             case message_type::sequence: {
                 // And Sequence messages have the following structure:
                 //   -> [8, SequenceId]
                 if (num_elements_of_message < 2) {
-                    throw signalr_exception("ack message has too few properties");
+                    throw signalr_exception("sequence message has too few properties");
                 }
 
-                int64_t sequency_id = 0;
+                int64_t sequence_id = 0;
                 switch (msgpack_obj_index->type) {
                 case msgpack::type::STR:
                     {
                         std::string invocation_id_str(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
                         try {
-                            sequency_id = std::stoll(invocation_id_str);
+                            sequence_id = std::stoll(invocation_id_str);
+                            break;
                         } catch (...) {
                             throw signalr_exception("sequence message's SequenceId str isn't an int");
                         }
@@ -785,15 +744,15 @@ namespace signalr
                 case msgpack::type::NIL:
                     break;
                 case msgpack::type::BOOLEAN:
-                    sequency_id = msgpack_obj_index->via.boolean ? 1 : 0;
+                    sequence_id = msgpack_obj_index->via.boolean ? 1 : 0;
                     break;
                 case msgpack::type::POSITIVE_INTEGER:
                 case msgpack::type::NEGATIVE_INTEGER:
-                    sequency_id = msgpack_obj_index->via.i64;
+                    sequence_id = msgpack_obj_index->via.i64;
                     break;
                 case msgpack::type::FLOAT32:
                 case msgpack::type::FLOAT64:
-                    sequency_id = static_cast<int64_t>(msgpack_obj_index->via.f64);
+                    sequence_id = static_cast<int64_t>(msgpack_obj_index->via.f64);
                     break;
                 case msgpack::type::BIN:
                     throw signalr_exception("Can't parse sequence message's SequenceId from binary");
@@ -813,7 +772,7 @@ namespace signalr
                         std::to_string(msgpack_obj_index->type)
                     );
                 }
-                m_message_handler->handle_sequence_message(std::move(sequence_message(sequency_id)));
+                m_message_handler->handle_sequence_message(std::move(sequence_message(sequence_id)));
                 break;
             }
             default:

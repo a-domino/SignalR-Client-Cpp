@@ -8,10 +8,10 @@
 #include <json/json.h>
 #include <memory>
 
+#define JSON_MSG_SEP '\x1e'
+
 namespace signalr
 {
-    extern char record_separator;
-
     signalr::value createValue(const Json::Value& v);
 
     Json::Value createJson(const signalr::value& v);

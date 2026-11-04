@@ -38,7 +38,7 @@ namespace signalr
 
     value::value(std::nullptr_t) : mType(value_type::null) {}
 
-    value::value(value_type t) : mType(t)
+    value::value(const value_type t) : mType(t)
     {
         switch (mType)
         {
@@ -128,8 +128,7 @@ namespace signalr
 
     value::value(const value& rhs)
     {
-        mType = rhs.mType;
-        switch (mType)
+        switch (rhs.mType)
         {
         case value_type::array:
             new (&mStorage.array) std::vector<value>(rhs.mStorage.array);
@@ -153,12 +152,12 @@ namespace signalr
         default:
             break;
         }
+        mType = rhs.mType;
     }
 
     value::value(value&& rhs) noexcept
     {
-        mType = rhs.mType;
-        switch (mType)
+        switch (rhs.mType)
         {
         case value_type::array:
             new (&mStorage.array) std::vector<signalr::value>(std::move(rhs.mStorage.array));
@@ -182,6 +181,7 @@ namespace signalr
         default:
             break;
         }
+        mType = rhs.mType;
     }
 
     value::~value()
@@ -217,8 +217,7 @@ namespace signalr
     {
         destruct_internals();
 
-        mType = rhs.mType;
-        switch (mType)
+        switch (rhs.mType)
         {
         case value_type::array:
             new (&mStorage.array) std::vector<value>(rhs.mStorage.array);
@@ -242,6 +241,7 @@ namespace signalr
         default:
             break;
         }
+        mType = rhs.mType;
 
         return *this;
     }
@@ -250,8 +250,7 @@ namespace signalr
     {
         destruct_internals();
 
-        mType = rhs.mType;
-        switch (mType)
+        switch (rhs.mType)
         {
         case value_type::array:
             new (&mStorage.array) std::vector<value>(std::move(rhs.mStorage.array));
@@ -275,6 +274,7 @@ namespace signalr
         default:
             break;
         }
+        mType = rhs.mType;
 
         return *this;
     }

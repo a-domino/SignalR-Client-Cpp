@@ -12,8 +12,9 @@ namespace signalr
 {
     namespace binary_message_parser
     {
-        bool try_parse_message(const unsigned char* message, size_t length, size_t* length_prefix_length, size_t* length_of_message)
-        {
+        bool try_parse_message(
+            const unsigned char* message, const size_t length, size_t* length_prefix_length, size_t* length_of_message
+        ) {
             if (length == 0)
             {
                 return false;
@@ -31,7 +32,7 @@ namespace signalr
 
             size_t num_bytes = 0;
             size_t message_length = 0;
-            size_t length_prefix_buffer = std::min((size_t)5, length);
+            const size_t length_prefix_buffer = std::min(static_cast<size_t>(5), length);
 
             unsigned char byte_read;
             do
@@ -54,7 +55,7 @@ namespace signalr
             }
 
             // not enough data with the given length prefix
-            if (length < message_length + num_bytes)
+            if (length < (message_length + num_bytes))
             {
                 throw signalr_exception("partial messages are not supported.");
             }

@@ -27,13 +27,18 @@ namespace signalr
 
         SIGNALRCLIENT_API hub_connection_builder& operator=(const hub_connection_builder&);
 
-        SIGNALRCLIENT_API hub_connection_builder& with_logging(std::shared_ptr<log_writer> logger, trace_level logLevel);
+        SIGNALRCLIENT_API hub_connection_builder& with_logging(std::shared_ptr<log_writer> logger,
+                                                               trace_level logLevel);
 
         SIGNALRCLIENT_API hub_connection_builder& with_log_entry_handler(const log_entry_handler& logEntryHandler);
 
-        SIGNALRCLIENT_API hub_connection_builder& with_websocket_factory(std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> factory);
+        SIGNALRCLIENT_API hub_connection_builder& with_websocket_factory(
+            std::function<std::shared_ptr<websocket_client>(const signalr_client_config&)> factory
+        );
 
-        SIGNALRCLIENT_API hub_connection_builder& with_http_client_factory(std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory);
+        SIGNALRCLIENT_API hub_connection_builder& with_http_client_factory(
+            std::function<std::shared_ptr<http_client>(const signalr_client_config&)> http_client_factory
+        );
 
         SIGNALRCLIENT_API hub_connection_builder& skip_negotiation(bool skip = true);
 

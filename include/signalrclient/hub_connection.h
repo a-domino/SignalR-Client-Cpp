@@ -15,6 +15,8 @@
 #include <functional>
 #include <memory>
 
+#include "signalrclient/cancel_stream_interface.h"
+
 namespace signalr
 {
     class http_client;
@@ -25,10 +27,15 @@ namespace signalr
     class message_handler;
 
     typedef std::function<signalr::value __cdecl (const std::vector<signalr::value>&)> method_invoked_handler;
+    typedef std::function<void __cdecl (const std::vector<signalr::value>&)> void_method_invoked_handler;
 
     class hub_connection
     {
     public:
+        enum class stop_type {
+            stop_on_close_error,
+            continue_on_close_error
+        };
 
         SIGNALRCLIENT_API ~hub_connection();
 
@@ -40,8 +47,13 @@ namespace signalr
 
         SIGNALRCLIENT_API hub_connection& operator=(hub_connection&&) noexcept;
 
-        SIGNALRCLIENT_API void __cdecl start(std::function<void(std::exception_ptr)> callback) noexcept;
-        SIGNALRCLIENT_API void __cdecl stop(const std::function<void(const std::exception_ptr&)>& callback) const noexcept;
+        SIGNALRCLIENT_API void __cdecl start(const std::function<void(const std::exception_ptr&)>& callback) const noexcept;
+        SIGNALRCLIENT_API void __cdecl stop(
+            const std::function<void(const std::exception_ptr&)>& callback,
+            std::chrono::milliseconds send_stop_msg_timeout = std::chrono::seconds(5),
+            stop_type stop_type = stop_type::continue_on_close_error,
+            const std::exception_ptr& reason = nullptr
+        ) const noexcept;
 
         SIGNALRCLIENT_API connection_state __cdecl get_connection_state() const;
         SIGNALRCLIENT_API std::string __cdecl get_connection_id() const;
@@ -50,9 +62,21 @@ namespace signalr
             const std::function<void(const std::exception_ptr&)>& disconnected_callback
         ) const;
 
-        SIGNALRCLIENT_API void __cdecl set_client_config(const signalr_client_config& config);
+        SIGNALRCLIENT_API void __cdecl set_client_config(const signalr_client_config& config) const;
 
         SIGNALRCLIENT_API void __cdecl on(const std::string& event_name, const method_invoked_handler& handler) const;
+        template <typename F, typename = typename std::enable_if<
+            std::is_void<decltype(std::declval<F>()(std::declval<const std::vector<value>&>()))>::value
+        >::type>
+        void on(const std::string& event_name, F&& handler) const {
+            on(
+                event_name,
+                method_invoked_handler([handler](const std::vector<value>& args) -> signalr::value {
+                    handler(args);
+                    return {};
+                })
+            );
+        }
 
         SIGNALRCLIENT_API void invoke(
             const std::string& method_name,
@@ -62,7 +86,18 @@ namespace signalr
             ) {}
         ) const noexcept;
 
-        SIGNALRCLIENT_API void send(const std::string& method_name, const std::vector<signalr::value>& arguments = std::vector<signalr::value>(), std::function<void(std::exception_ptr)> callback = [](std::exception_ptr) {}) noexcept;
+        SIGNALRCLIENT_API void send(
+            const std::string& method_name,
+            const std::vector<signalr::value>& arguments = std::vector<signalr::value>(),
+            const std::function<void(const std::exception_ptr&)>& callback = [](const std::exception_ptr&) {}
+        ) const noexcept;
+
+        SIGNALRCLIENT_API void stream(
+            const std::string& method_name, const std::vector<signalr::value>& arguments,
+            const std::function<void(std::shared_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
+            const std::function<void(signalr::value&&)>& handle_item_callback,
+            const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
+        ) const noexcept;
 
     private:
         friend class hub_connection_builder;

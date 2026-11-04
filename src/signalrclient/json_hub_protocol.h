@@ -11,12 +11,37 @@ namespace signalr
 {
     class json_hub_protocol : public hub_protocol
     {
-    public:
-        std::string write_message(const hub_message*) const override;
-        std::vector<std::unique_ptr<hub_message>> parse_and_handle_messages(const std::string&) const override;
+        class parser_and_handler : public hub_protocol::parser_and_handler {
+        public:
+            explicit parser_and_handler(const std::shared_ptr<message_handler>& msg_handler)
+                    : m_message_handler(msg_handler) {}
 
-        const std::string& name() const override
-        {
+            void parse_and_handle_messages(const std::string&) const override;
+
+        private:
+            void parse_and_handle_message(const char* begin, size_t length) const;
+
+            const std::shared_ptr<message_handler> m_message_handler;
+        };
+
+    public:
+        std::string write_invocation_message(const invocation_message*) const override;
+        std::string write_stream_item_message(const stream_item_message*) const override;
+        std::string write_completion_message(const completion_message*) const override;
+        std::string write_stream_invocation_message(const stream_invocation_message*) const override;
+        std::string write_cancel_invocation_message(const cancel_invocation_message*) const override;
+        std::string write_ping_message(const ping_message*) const override;
+        std::string write_close_message(const close_message*) const override;
+        std::string write_ack_message(const ack_message*) const override;
+        std::string write_sequence_message(const sequence_message*) const override;
+
+        std::unique_ptr<hub_protocol::parser_and_handler> create_parser_and_handler(
+            const std::shared_ptr<message_handler>& msg_handler
+        ) const override {
+            return std::unique_ptr<parser_and_handler>(new parser_and_handler{msg_handler});
+        }
+
+        const std::string& name() const override {
             return m_protocol_name;
         }
 
@@ -25,15 +50,14 @@ namespace signalr
             return 1;
         }
 
-        signalr::transfer_format transfer_format() const override
-        {
+        signalr::transfer_format transfer_format() const override {
             return signalr::transfer_format::text;
         }
 
         ~json_hub_protocol() override = default;
-    private:
-        std::unique_ptr<hub_message> parse_message(const char* begin, size_t length) const;
 
-        std::string m_protocol_name = "json";
+    private:
+
+        static const std::string m_protocol_name;
     };
 }

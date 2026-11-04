@@ -19,12 +19,12 @@ namespace signalr
                 { "version", signalr::value((double)protocol->version()) }
             };
 
-            return Json::writeString(getJsonWriter(), createJson(signalr::value(std::move(map)))) + record_separator;
+            return Json::writeString(getJsonWriter(), createJson(signalr::value(std::move(map)))) + JSON_MSG_SEP;
         }
 
         std::tuple<std::string, signalr::value> parse_handshake(const std::string& response)
         {
-            auto pos = response.find(record_separator);
+            auto pos = response.find(JSON_MSG_SEP);
             if (pos == std::string::npos)
             {
                 throw signalr_exception("incomplete message received");

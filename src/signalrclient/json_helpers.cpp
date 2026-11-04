@@ -5,24 +5,22 @@
 #include "stdafx.h"
 #include "json_helpers.h"
 #include <cmath>
-#include <stdint.h>
+#include <cstdint>
 
 namespace signalr
 {
-    char record_separator = '\x1e';
-
     signalr::value createValue(const Json::Value& v)
     {
         switch (v.type())
         {
         case Json::ValueType::booleanValue:
-            return signalr::value(v.asBool());
+            return {v.asBool()};
         case Json::ValueType::realValue:
         case Json::ValueType::intValue:
         case Json::ValueType::uintValue:
-            return signalr::value(v.asDouble());
+            return {v.asDouble()};
         case Json::ValueType::stringValue:
-            return signalr::value(v.asString());
+            return {v.asString()};
         case Json::ValueType::arrayValue:
         {
             std::vector<signalr::value> vec;
@@ -30,7 +28,7 @@ namespace signalr
             {
                 vec.push_back(createValue(val));
             }
-            return signalr::value(std::move(vec));
+            return {std::move(vec)};
         }
         case Json::ValueType::objectValue:
         {
@@ -39,39 +37,31 @@ namespace signalr
             {
                 map.insert({ val, createValue(v[val]) });
             }
-            return signalr::value(std::move(map));
+            return {std::move(map)};
         }
         case Json::ValueType::nullValue:
         default:
-            return signalr::value();
+            return {};
         }
     }
 
-    char getBase64Value(uint32_t i)
+    static char getBase64Value(const char i)
     {
-        char index = (char)i;
-        if (index < 26)
-        {
-            return 'A' + index;
+        int8_t return_val = static_cast<char>(i);
+        if (return_val < 26) {
+            return_val += 'A';
+        } else if (i < 52) {
+            return_val += 'a' - 26;
+        } else if (i < 62) {
+            return_val += '0' - 52;
+        } else if (i == 62) {
+            return_val = '+';
+        } else if (i == 63) {
+            return_val = '/';
+        } else { // i > 63
+            throw std::out_of_range("base64 table index out of range: " + std::to_string(i));
         }
-        if (index < 52)
-        {
-            return 'a' + (index - 26);
-        }
-        if (index < 62)
-        {
-            return '0' + (index - 52);
-        }
-        if (index == 62)
-        {
-            return '+';
-        }
-        if (index == 63)
-        {
-            return '/';
-        }
-
-        throw std::out_of_range("base64 table index out of range: " + std::to_string(index));
+        return return_val;
     }
 
     std::string base64Encode(const std::vector<uint8_t>& data)
@@ -79,29 +69,32 @@ namespace signalr
         std::string base64result;
 
         size_t i = 0;
-        while (i <= data.size() - 3)
+        while (i <= (data.size() - 3))
         {
-            uint32_t b = ((uint32_t)data[i] << 16) | ((uint32_t)data[i + 1] << 8) | (uint32_t)data[i + 2];
-            base64result.push_back(getBase64Value((b >> 18) & 0x3F));
-            base64result.push_back(getBase64Value((b >> 12) & 0x3F));
-            base64result.push_back(getBase64Value((b >> 6) & 0x3F));
-            base64result.push_back(getBase64Value(b & 0x3F));
+            const uint32_t b =
+                (static_cast<uint32_t>(data[i]) << 16) |
+                    (static_cast<uint32_t>(data[i + 1]) << 8) |
+                        static_cast<uint32_t>(data[i + 2]);
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 18) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 12) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 6) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>(b & 0x3F)));
 
             i += 3;
         }
         if (data.size() - i == 2)
         {
-            uint32_t b = ((uint32_t)data[i] << 8) | (uint32_t)data[i + 1];
-            base64result.push_back(getBase64Value((b >> 10) & 0x3F));
-            base64result.push_back(getBase64Value((b >> 4) & 0x3F));
-            base64result.push_back(getBase64Value((b << 2) & 0x3F));
+            const uint16_t b = (static_cast<uint16_t>(data[i]) << 8) | static_cast<uint16_t>(data[i + 1]);
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 10) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 4) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>((b << 2) & 0x3F)));
             base64result.push_back('=');
         }
         else if (data.size() - i == 1)
         {
-            uint32_t b = (uint32_t)data[i];
-            base64result.push_back(getBase64Value((b >> 2) & 0x3F));
-            base64result.push_back(getBase64Value((b << 4) & 0x3F));
+            const uint8_t b = data[i];
+            base64result.push_back(getBase64Value(static_cast<char>((b >> 2) & 0x3F)));
+            base64result.push_back(getBase64Value(static_cast<char>((b << 4) & 0x3F)));
             base64result.push_back('=');
             base64result.push_back('=');
         }
@@ -114,10 +107,10 @@ namespace signalr
         switch (v.type())
         {
         case signalr::value_type::boolean:
-            return Json::Value(v.as_bool());
+            return {v.as_bool()};
         case signalr::value_type::float64:
         {
-            auto value = v.as_double();
+            const auto value = v.as_double();
             double intPart;
             // Workaround for 1.0 being output as 1.0 instead of 1
             // because the server expects certain values to be 1 instead of 1.0 (like protocol version)
@@ -125,35 +118,26 @@ namespace signalr
             {
                 if (value < 0)
                 {
-                    if (value >= (double)INT64_MIN)
+                    if (value >= static_cast<double>(INT64_MIN))
                     {
                         // Fits within int64_t
-                        return Json::Value(static_cast<int64_t>(intPart));
+                        return {static_cast<int64_t>(intPart)};
                     }
-                    else
-                    {
-                        // Remain as double
-                        return Json::Value(value);
-                    }
+                    // Remain as double
+                    return {value};
                 }
-                else
+                if (value <= static_cast<double>(UINT64_MAX))
                 {
-                    if (value <= (double)UINT64_MAX)
-                    {
-                        // Fits within uint64_t
-                        return Json::Value(static_cast<uint64_t>(intPart));
-                    }
-                    else
-                    {
-                        // Remain as double
-                        return Json::Value(value);
-                    }
+                    // Fits within uint64_t
+                    return {static_cast<uint64_t>(intPart)};
                 }
+                // Remain as double
+                return {value};
             }
-            return Json::Value(v.as_double());
+            return {v.as_double()};
         }
         case signalr::value_type::string:
-            return Json::Value(v.as_string());
+            return {v.as_string()};
         case signalr::value_type::array:
         {
             const auto& array = v.as_array();
@@ -177,11 +161,11 @@ namespace signalr
         case signalr::value_type::binary:
         {
             const auto& binary = v.as_binary();
-            return Json::Value(base64Encode(binary));
+            return {base64Encode(binary)};
         }
         case signalr::value_type::null:
         default:
-            return Json::Value(Json::ValueType::nullValue);
+            return {Json::ValueType::nullValue};
         }
     }
 

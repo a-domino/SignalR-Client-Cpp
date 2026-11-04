@@ -7,15 +7,14 @@
 #include "test_http_client.h"
 #include "signalrclient/signalr_client_config.h"
 #include <algorithm>
+#include <memory>
+#include <sstream>
 
 using namespace signalr;
 
 std::string remove_date_from_log_entry(const std::string &log_entry)
 {
-    // dates are ISO 8601 (e.g. `2014-11-13T06:05:29.452066Z`)
     auto date_end_index = log_entry.find_first_of("Z") + 1;
-
-    // date is followed by a whitespace hence +1
     return log_entry.substr(date_end_index + 1);
 }
 
@@ -35,16 +34,18 @@ std::function<std::shared_ptr<signalr::http_client>(const signalr::signalr_clien
 {
     return [](const signalr_client_config& config)
     {
-        auto client = std::shared_ptr<test_http_client>(new test_http_client([](const std::string& url, http_request request, cancellation_token)
+        auto client = std::make_shared<test_http_client>(
+            [](const std::string& url, const http_request&, const cancellation_token&)
             {
-                auto response_body =
+                const auto response_body =
                     url.find_first_of("/negotiate") != 0
                     ? "{\"connectionId\" : \"f7707523-307d-4cba-9abf-3eef701241e8\", "
                     "\"availableTransports\" : [ { \"transport\": \"WebSockets\", \"transferFormats\": [ \"Text\", \"Binary\" ] } ] }"
                     : "";
 
                 return http_response{ 200, response_body };
-            }));
+            }
+        );
 
         client->set_scheduler(config.get_scheduler());
         return client;
@@ -54,21 +55,14 @@ std::function<std::shared_ptr<signalr::http_client>(const signalr::signalr_clien
 std::string create_uri()
 {
     auto unit_test = ::testing::UnitTest::GetInstance();
-
-    // unit test will be null if this function is not called in a test
     assert(unit_test);
-
-    return std::string("http://")
-        .append(unit_test->current_test_info()->name());
+    return std::string("http://").append(unit_test->current_test_info()->name());
 }
 
 std::string create_uri(const std::string& query_string)
 {
     auto unit_test = ::testing::UnitTest::GetInstance();
-
-    // unit test will be null if this function is not called in a test
     assert(unit_test);
-
     return std::string("http://")
         .append(unit_test->current_test_info()->name())
         .append("?" + query_string);
@@ -96,7 +90,6 @@ std::string dump_vector(const std::vector<std::string>& source)
             ss << std::endl;
         }
     }
-
     return ss.str();
 }
 
@@ -106,7 +99,7 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
     switch (expected.type())
     {
     case value_type::string:
-        ASSERT_STREQ(expected.as_string().data(), actual.as_string().data());
+        ASSERT_STREQ(expected.as_string().c_str(), actual.as_string().c_str());
         break;
     case value_type::boolean:
         ASSERT_EQ(expected.as_bool(), actual.as_bool());
@@ -116,12 +109,12 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
         break;
     case value_type::map:
     {
-        auto& expected_map = expected.as_map();
-        auto& actual_map = actual.as_map();
+        const auto& expected_map = expected.as_map();
+        const auto& actual_map = actual.as_map();
         ASSERT_EQ(expected_map.size(), actual_map.size());
-        for (auto& pair : expected_map)
+        for (const auto& pair : expected_map)
         {
-            const auto& actual_found = actual_map.find(pair.first);
+            const auto actual_found = actual_map.find(pair.first);
             ASSERT_FALSE(actual_found == actual_map.end());
             assert_signalr_value_equality(pair.second, actual_found->second);
         }
@@ -129,10 +122,10 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
     }
     case value_type::array:
     {
-        auto& expected_array = expected.as_array();
-        auto& actual_array = actual.as_array();
+        const auto& expected_array = expected.as_array();
+        const auto& actual_array = actual.as_array();
         ASSERT_EQ(expected_array.size(), actual_array.size());
-        for (auto i = 0; i < expected_array.size(); ++i)
+        for (size_t i = 0; i < expected_array.size(); ++i)
         {
             assert_signalr_value_equality(expected_array[i], actual_array[i]);
         }
@@ -140,10 +133,10 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
     }
     case value_type::binary:
     {
-        auto& expected_binary = expected.as_binary();
-        auto& actual_binary = actual.as_binary();
+        const auto& expected_binary = expected.as_binary();
+        const auto& actual_binary = actual.as_binary();
         ASSERT_EQ(expected_binary.size(), actual_binary.size());
-        for (auto i = 0; i < expected_binary.size(); ++i)
+        for (size_t i = 0; i < expected_binary.size(); ++i)
         {
             ASSERT_EQ(expected_binary[i], actual_binary[i]);
         }
@@ -152,46 +145,69 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
     case value_type::null:
         break;
     default:
-        ASSERT_TRUE(false);
+        FAIL() << "Unhandled value_type in assert_signalr_value_equality";
         break;
     }
 }
 
-void assert_hub_message_equality(signalr::hub_message* expected, signalr::hub_message* actual)
+void assert_invocation_message_equality(const invocation_message& expected, const invocation_message& actual)
 {
-    ASSERT_EQ(expected->message_type, actual->message_type);
-    switch (expected->message_type)
+    ASSERT_STREQ(expected.invocation_id.c_str(), actual.invocation_id.c_str());
+    ASSERT_STREQ(expected.target.c_str(), actual.target.c_str());
+    ASSERT_EQ(expected.arguments.size(), actual.arguments.size());
+    for (size_t i = 0; i < expected.arguments.size(); ++i)
     {
-    case message_type::invocation:
-    {
-        auto expected_message = reinterpret_cast<invocation_message*>(expected);
-        auto actual_message = reinterpret_cast<invocation_message*>(actual);
+        assert_signalr_value_equality(expected.arguments[i], actual.arguments[i]);
+    }
+    ASSERT_EQ(expected.stream_ids, actual.stream_ids);
+}
 
-        ASSERT_STREQ(expected_message->invocation_id.data(), actual_message->invocation_id.data());
-        ASSERT_STREQ(expected_message->target.data(), actual_message->target.data());
-        assert_signalr_value_equality(expected_message->arguments, actual_message->arguments);
-        //stream_ids
-        break;
-    }
-    case message_type::completion:
-    {
-        auto expected_message = reinterpret_cast<completion_message*>(expected);
-        auto actual_message = reinterpret_cast<completion_message*>(actual);
+void assert_stream_item_message_equality(const stream_item_message& expected, const stream_item_message& actual)
+{
+    ASSERT_STREQ(expected.invocation_id.c_str(), actual.invocation_id.c_str());
+    assert_signalr_value_equality(expected.item, actual.item);
+}
 
-        ASSERT_EQ(expected_message->has_result, actual_message->has_result);
-        ASSERT_STREQ(expected_message->invocation_id.data(), actual_message->invocation_id.data());
-        ASSERT_STREQ(expected_message->error.data(), actual_message->error.data());
-        assert_signalr_value_equality(expected_message->result, actual_message->result);
-
-        break;
-    }
-    case message_type::ping:
+void assert_completion_message_equality(const completion_message& expected, const completion_message& actual)
+{
+    ASSERT_EQ(expected.kind_of_result, actual.kind_of_result);
+    ASSERT_STREQ(expected.invocation_id.c_str(), actual.invocation_id.c_str());
+    ASSERT_STREQ(expected.error.c_str(), actual.error.c_str());
+    if (expected.kind_of_result == completion_message::result_kind::non_void_result)
     {
-        // No fields on ping messages currently
-        break;
+        assert_signalr_value_equality(expected.result, actual.result);
     }
-    default:
-        ASSERT_TRUE(false);
-        break;
+}
+
+void assert_stream_invocation_message_equality(const stream_invocation_message& expected, const stream_invocation_message& actual)
+{
+    ASSERT_STREQ(expected.invocation_id.c_str(), actual.invocation_id.c_str());
+    ASSERT_STREQ(expected.target.c_str(), actual.target.c_str());
+    ASSERT_EQ(expected.arguments.size(), actual.arguments.size());
+    for (size_t i = 0; i < expected.arguments.size(); ++i)
+    {
+        assert_signalr_value_equality(expected.arguments[i], actual.arguments[i]);
     }
+    ASSERT_EQ(expected.stream_ids, actual.stream_ids);
+}
+
+void assert_cancel_invocation_message_equality(const cancel_invocation_message& expected, const cancel_invocation_message& actual)
+{
+    ASSERT_STREQ(expected.invocation_id.c_str(), actual.invocation_id.c_str());
+}
+
+void assert_close_message_equality(const close_message& expected, const close_message& actual)
+{
+    ASSERT_STREQ(expected.error.c_str(), actual.error.c_str());
+    ASSERT_EQ(expected.allow_reconnect, actual.allow_reconnect);
+}
+
+void assert_ack_message_equality(const ack_message& expected, const ack_message& actual)
+{
+    ASSERT_EQ(expected.sequence_id, actual.sequence_id);
+}
+
+void assert_sequence_message_equality(const sequence_message& expected, const sequence_message& actual)
+{
+    ASSERT_EQ(expected.sequence_id, actual.sequence_id);
 }

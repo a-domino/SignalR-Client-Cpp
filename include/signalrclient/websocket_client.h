@@ -12,7 +12,7 @@ namespace signalr
     class websocket_client
     {
     public:
-        virtual ~websocket_client() {};
+        virtual ~websocket_client() = default;
 
         virtual void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) = 0;
 

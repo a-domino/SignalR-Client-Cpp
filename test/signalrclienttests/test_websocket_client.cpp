@@ -2,15 +2,15 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-#include "stdafx.h"
 #include "test_websocket_client.h"
+
+#include <utility>
 #include "test_utils.h"
-#include "signalrclient/signalr_exception.h"
 
 std::shared_ptr<test_websocket_client> create_test_websocket_client(
-    std::function<void(const std::string & msg, std::function<void(std::exception_ptr)>)> send_function,
-    std::function<void(const std::string&, std::function<void(std::exception_ptr)>)> connect_function,
-    std::function<void(std::function<void(std::exception_ptr)>)> close_function,
+    const std::function<void(const std::string & msg, std::function<void(std::exception_ptr)>)>& send_function,
+    const std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>& connect_function,
+    const std::function<void(std::function<void(std::exception_ptr)>)>& close_function,
     bool ignore_pings)
 {
     auto websocket_client = std::make_shared<test_websocket_client>();
@@ -23,10 +23,24 @@ std::shared_ptr<test_websocket_client> create_test_websocket_client(
 }
 
 test_websocket_client::test_websocket_client()
-    : m_connect_function(std::make_shared<std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>>([](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(nullptr); })),
-    m_send_function(std::make_shared<std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)>>([](const std::string msg, std::function<void(std::exception_ptr)> callback) { callback(nullptr); })),
-    m_close_function(std::make_shared<std::function<void(std::function<void(std::exception_ptr)>)>>([](std::function<void(std::exception_ptr)> callback) { callback(nullptr); })),
-    m_receive_message_event(), m_receive_message(), m_stopped(true), receive_count(0), ignore_pings(true)
+  : receive_count(0)
+  , ignore_pings(true)
+  , m_connect_function(
+      std::make_shared<std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>>(
+          [](const std::string&, const std::function<void(std::exception_ptr)>& callback) { callback(nullptr); }
+        )
+      )
+  , m_send_function(
+      std::make_shared<std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)>>(
+          [](const std::string&, const std::function<void(std::exception_ptr)>& callback) { callback(nullptr); }
+        )
+      )
+  , m_close_function(
+      std::make_shared<std::function<void(std::function<void(std::exception_ptr)>)>>(
+          [](const std::function<void(std::exception_ptr)>& callback) { callback(nullptr); }
+        )
+      )
+  , m_stopped(true)
 {
     m_receive_loop_not_running.cancel();
 }
@@ -45,7 +59,7 @@ test_websocket_client::~test_websocket_client()
             }
             // we don't care if someone already set the promise
             // we're just trying to end the receive loop
-            catch (std::future_error) {}
+            catch (const std::future_error&) {}
         }
 
         m_receive_loop_not_running.wait(1000);
@@ -75,7 +89,7 @@ void test_websocket_client::start(const std::string& url, const std::function<vo
         });
 }
 
-void test_websocket_client::stop(std::function<void(std::exception_ptr)> callback)
+void test_websocket_client::stop(const std::function<void(const std::exception_ptr&)>& callback)
 {
     {
         std::lock_guard<std::mutex> lock(m_receive_lock);
@@ -89,7 +103,7 @@ void test_websocket_client::stop(std::function<void(std::exception_ptr)> callbac
             }
             // we don't care if someone already set the promise
             // we're just trying to end the receive loop
-            catch (std::future_error) {}
+            catch (const std::future_error&) {}
         }
 
         m_receive_loop_not_running.wait(1000);
@@ -121,7 +135,7 @@ void test_websocket_client::send(const std::string& payload, signalr::transfer_f
         });
 }
 
-void test_websocket_client::receive(std::function<void(const std::string&, std::exception_ptr)> callback)
+void test_websocket_client::receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback)
 {
     receive_count++;
     receive_loop_started.cancel();
@@ -149,21 +163,21 @@ void test_websocket_client::receive(std::function<void(const std::string&, std::
             }
 
             m_receive_loop_not_running.cancel();
-            callback(message, exception);
+            callback(std::move(message), exception);
         }).detach();
 }
 
-void test_websocket_client::set_connect_function(std::function<void(const std::string&, std::function<void(std::exception_ptr)>)> connect_function)
+void test_websocket_client::set_connect_function(const std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>& connect_function)
 {
     m_connect_function = std::make_shared<std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>>(connect_function);
 }
 
-void test_websocket_client::set_send_function(std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)> send_function)
+void test_websocket_client::set_send_function(const std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)>& send_function)
 {
     m_send_function = std::make_shared<std::function<void(const std::string & msg, std::function<void(std::exception_ptr)>)>>(send_function);
 }
 
-void test_websocket_client::set_close_function(std::function<void(std::function<void(std::exception_ptr)>)> close_function)
+void test_websocket_client::set_close_function(const std::function<void(std::function<void(std::exception_ptr)>)>& close_function)
 {
     m_close_function = std::make_shared<std::function<void(std::function<void(std::exception_ptr)>)>>(close_function);
 }
@@ -180,6 +194,6 @@ void test_websocket_client::receive_message(std::exception_ptr ex)
 {
     m_receive_waiting.get();
     std::lock_guard<std::mutex> lock(m_receive_lock);
-    m_receive_exception = ex;
+    m_receive_exception = std::move(ex);
     m_receive_message_event.set(true);
 }

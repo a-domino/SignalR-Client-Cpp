@@ -54,7 +54,6 @@ TEST(scheduler, callback_with_delay_is_delayed)
     auto delay = std::chrono::milliseconds(100);
 
     auto mre = manual_reset_event<void>();
-    bool first_callback = false;
     auto prev_now = std::chrono::steady_clock::now();
     scheduler.schedule([&mre]()
         {

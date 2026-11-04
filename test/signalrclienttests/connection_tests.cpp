@@ -517,9 +517,9 @@ TEST(connection_impl_start, start_fails_if_negotiate_response_does_not_have_webs
         );
 
     auto mre = manual_reset_event<void>();
-    connection->start([&mre](std::exception_ptr exception)
+    connection->start([&mre](const std::exception_ptr& exception)
     {
-        mre.set(std::move(exception));
+        mre.set(exception);
     });
 
     try
@@ -2216,6 +2216,7 @@ TEST(connection_impl_stop, http_client_throws_from_registered_token)
     ASSERT_TRUE(has_log_entry("[warning  ] disconnect event threw an exception in shutdown: test: from http client\n", log_entries)) << dump_vector(log_entries);
 }
 
+namespace {
 class stop_capturing_websocket_client : public websocket_client
 {
 public:
@@ -2224,38 +2225,39 @@ public:
     {
     }
 
-    virtual void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) noexcept
+    void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) noexcept override
     {
         callback(nullptr);
     }
 
-    virtual void stop(std::function<void(std::exception_ptr)> callback) noexcept
+    void stop(const std::function<void(const std::exception_ptr&)>& callback) noexcept override
     {
         m_stop_callback = callback;
         std::thread([this]()
-            {
-                m_stop_callback(m_exception_on_stop ? std::make_exception_ptr(std::runtime_error("")) : nullptr);
-            }).detach();
+        {
+            m_stop_callback(m_exception_on_stop ? std::make_exception_ptr(std::runtime_error("")) : nullptr);
+        }).detach();
     }
 
-    virtual void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
-                      callback) noexcept
-    {
+    void send(
+        const std::string& payload, signalr::transfer_format transfer_format,
+        const std::function<void(std::exception_ptr)>& callback
+    ) noexcept override {
         callback(nullptr);
     }
 
-    virtual void receive(std::function<void(const std::string&, std::exception_ptr)> callback)
-    {
+    void receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback) override {
         std::thread([callback]()
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                callback("", nullptr);
-            }).detach();
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            callback("", nullptr);
+        }).detach();
     }
 private:
     std::function<void(std::exception_ptr)> m_stop_callback;
     bool m_exception_on_stop;
 };
+}
 
 // regression test: if a websocket_client impl held onto a reference of the stop callback we passed in it could be destructed in the middle of the stop callback running
 // which would delete the callback while we're still running it, resulting in unexpected behavior

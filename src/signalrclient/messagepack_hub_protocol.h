@@ -25,9 +25,6 @@ namespace signalr
         };
 
     public:
-        template<signalr::message_type message_type>
-        std::string write_message(const hub_message<message_type>*) const;
-
         std::string write_invocation_message(const invocation_message*) const override;
         std::string write_stream_item_message(const stream_item_message*) const override;
         std::string write_completion_message(const completion_message*) const override;

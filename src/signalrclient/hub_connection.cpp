@@ -51,30 +51,45 @@ namespace signalr
                 {
                     completion.set();
                 },
-                nullptr, /* is_dtor */true
+                std::chrono::milliseconds(100),
+                hub_connection_impl::stop_type::continue_on_close_error,
+                std::make_exception_ptr(signalr_exception("Shutting down"))
             );
             completion.get();
         }
     }
 
-    void hub_connection::start(std::function<void(std::exception_ptr)> callback) noexcept
+    void hub_connection::start(const std::function<void(const std::exception_ptr&)>& callback) const noexcept
     {
         if (!m_pImpl)
         {
-            callback(std::make_exception_ptr(signalr_exception("start() cannot be called on destructed hub_connection instance")));
+            callback(
+                std::make_exception_ptr(
+                    signalr_exception("start() cannot be called on destructed hub_connection instance")
+                )
+            );
+            return;
         }
 
         m_pImpl->start(callback);
     }
 
-    void hub_connection::stop(const std::function<void(const std::exception_ptr&)>& callback) const noexcept
+    void hub_connection::stop(
+        const std::function<void(const std::exception_ptr&)>& callback, std::chrono::milliseconds send_stop_msg_timeout,
+        stop_type stop_type, const std::exception_ptr& reason
+    ) const noexcept
     {
         if (!m_pImpl)
         {
-            callback(std::make_exception_ptr(signalr_exception("stop() cannot be called on destructed hub_connection instance")));
+            callback(
+                std::make_exception_ptr(
+                    signalr_exception("stop() cannot be called on destructed hub_connection instance")
+                )
+            );
+            return;
         }
 
-        m_pImpl->stop(callback, nullptr);
+        m_pImpl->stop(callback, send_stop_msg_timeout, static_cast<hub_connection_impl::stop_type>(stop_type), reason);
     }
 
     void hub_connection::on(const std::string& event_name, const method_invoked_handler& handler) const {
@@ -93,22 +108,55 @@ namespace signalr
     {
         if (!m_pImpl)
         {
-            callback(signalr::value(), std::make_exception_ptr(signalr_exception("invoke() cannot be called on destructed hub_connection instance")));
+            callback(
+                signalr::value(),
+                std::make_exception_ptr(
+                    signalr_exception("invoke() cannot be called on destructed hub_connection instance")
+                )
+            );
             return;
         }
 
         return m_pImpl->invoke(method_name, arguments, callback);
     }
 
-    void hub_connection::send(const std::string& method_name, const std::vector<signalr::value>& arguments, std::function<void(std::exception_ptr)> callback) noexcept
-    {
+    void hub_connection::send(
+        const std::string& method_name, const std::vector<signalr::value>& arguments,
+        const std::function<void(const std::exception_ptr&)>& callback
+    ) const noexcept {
         if (!m_pImpl)
         {
-            callback(std::make_exception_ptr(signalr_exception("send() cannot be called on destructed hub_connection instance")));
+            callback(
+                std::make_exception_ptr(
+                    signalr_exception("send() cannot be called on destructed hub_connection instance")
+                )
+            );
             return;
         }
 
         m_pImpl->send(method_name, arguments, callback);
+    }
+
+    void hub_connection::stream(
+        const std::string& method_name, const std::vector<signalr::value>& arguments,
+        const std::function<void(std::shared_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
+        const std::function<void(signalr::value&&)>& handle_item_callback,
+        const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
+    ) const noexcept {
+        if (!m_pImpl)
+        {
+            completion_callback(
+                value(),
+                std::make_exception_ptr(
+                    signalr_exception("stream() cannot be called on destructed hub_connection instance")
+                )
+            );
+            return;
+        }
+
+        m_pImpl->stream(
+            method_name, arguments, stream_invocation_sent_callback, handle_item_callback, completion_callback
+        );
     }
 
     connection_state hub_connection::get_connection_state() const
@@ -142,8 +190,7 @@ namespace signalr
         m_pImpl->set_disconnected(disconnected_callback);
     }
 
-    void hub_connection::set_client_config(const signalr_client_config& config)
-    {
+    void hub_connection::set_client_config(const signalr_client_config& config) const {
         if (!m_pImpl)
         {
             throw signalr_exception("set_client_config() cannot be called on destructed hub_connection instance");

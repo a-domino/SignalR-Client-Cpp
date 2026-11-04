@@ -2,198 +2,215 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-#include "stdafx.h"
-#include <cassert>
 #include "signalr_default_scheduler.h"
+
+#include <algorithm>
+#include <cassert>
 #include <thread>
 #include <utility>
 
 namespace signalr
 {
-    thread::thread()
-        : m_internals(std::make_shared<internals>())
+    signalr_default_scheduler::internals::internals(size_t thread_count)
+        : m_thread_count(thread_count == 0 ? std::max(1u, std::thread::hardware_concurrency()) : thread_count)
     {
-        auto internals = m_internals;
+    }
 
-        m_thread = std::thread([=]()
+    void signalr_default_scheduler::internals::start()
+    {
+        auto self = shared_from_this();
+
+        // Timer thread monitors the priority queue and pushes due tasks to the ready queue
+        std::thread([self]() {
+            self->timer_loop();
+        }).detach();
+
+        // Worker threads execute ready tasks concurrently
+        for (size_t i = 0; i < m_thread_count; ++i)
+        {
+            std::thread([self]() {
+                self->worker_loop();
+            }).detach();
+        }
+    }
+
+    void signalr_default_scheduler::internals::schedule(const signalr_base_cb& cb, std::chrono::milliseconds delay)
+    {
+        if (!cb)
+        {
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(m_mutex);
+        if (m_closed)
+        {
+            return;
+        }
+
+        if (delay <= std::chrono::milliseconds::zero())
+        {
+            m_ready_tasks.push(cb);
+            lock.unlock();
+            m_ready_cv.notify_one();
+        }
+        else
+        {
+            const auto due_time = std::chrono::steady_clock::now() + delay;
+            const uint64_t seq = ++m_sequence_counter;
+            const bool is_earliest = m_delayed_tasks.empty() || (due_time < m_delayed_tasks.top().due_time);
+
+            m_delayed_tasks.push({due_time, seq, cb});
+            lock.unlock();
+
+            if (is_earliest)
             {
-                while (true)
+                m_timer_cv.notify_one();
+            }
+        }
+    }
+
+    void signalr_default_scheduler::internals::close()
+    {
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            if (m_closed)
+            {
+                return;
+            }
+            m_closed = true;
+
+            // Immediately purge pending tasks to release captured resources promptly
+            while (!m_ready_tasks.empty())
+            {
+                m_ready_tasks.pop();
+            }
+            while (!m_delayed_tasks.empty())
+            {
+                m_delayed_tasks.pop();
+            }
+        }
+
+        m_timer_cv.notify_all();
+        m_ready_cv.notify_all();
+    }
+
+    void signalr_default_scheduler::internals::timer_loop()
+    {
+        while (true)
+        {
+            size_t ready_count = 0;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+
+                if (m_closed)
                 {
-                    {
-                        signalr_base_cb cb;
-                        {
-                            std::unique_lock<std::mutex> lock(internals->m_callback_lock);
-                            auto& callback = internals->m_callback;
-                            const auto& closed = internals->m_closed;
-
-                            if (closed && callback == nullptr)
-                            {
-                                return;
-                            }
-
-                            if (callback == nullptr)
-                            {
-                                internals->m_callback_cv.wait(lock,
-                                    [&callback, &closed]
-                                    {
-                                        return closed || callback != nullptr;
-                                    });
-                            }
-
-                            if (closed && callback == nullptr)
-                            {
-                                assert(callback == nullptr);
-                                return;
-                            }
-
-                            cb = callback;
-                            internals->m_callback = nullptr;
-                        } // unlock
-
-                        try
-                        {
-                            cb();
-                        }
-                        catch (...)
-                        {
-                            // ignore exceptions?
-                            assert(false);
-                        }
-                    } // destruct cb, otherwise it's possible a shared_ptr is being held by the lambda/function and on destruction it could schedule work which could be
-                    // added to this thread and if it then blocks waiting for completion it would deadlock. If we destruct before setting the m_busy flag,
-                    // another thread will run the work instead.
-
-                    internals->m_busy = false;
+                    return;
                 }
 
-                assert(internals->m_callback == nullptr);
-            });
-    }
+                if (m_delayed_tasks.empty())
+                {
+                    m_timer_cv.wait(lock, [this]() {
+                        return m_closed || !m_delayed_tasks.empty();
+                    });
+                }
+                else
+                {
+                    const auto next_time = m_delayed_tasks.top().due_time;
+                    m_timer_cv.wait_until(lock, next_time, [this, next_time]() {
+                        return m_closed || m_delayed_tasks.empty() || m_delayed_tasks.top().due_time < next_time;
+                    });
+                }
 
-    void thread::add(signalr_base_cb cb) const {
-        {
-            assert(m_internals->m_closed == false);
-            assert(m_internals->m_busy == false);
+                if (m_closed)
+                {
+                    return;
+                }
 
-            std::lock_guard<std::mutex> lock(m_internals->m_callback_lock);
-            m_internals->m_callback = std::move(cb);
-            m_internals->m_busy = true;
-        } // unlock
-    }
+                const auto now = std::chrono::steady_clock::now();
+                while (!m_delayed_tasks.empty() && m_delayed_tasks.top().due_time <= now)
+                {
+                    auto task = std::move(const_cast<delayed_task&>(m_delayed_tasks.top()).callback);
+                    m_delayed_tasks.pop();
+                    m_ready_tasks.push(std::move(task));
+                    ++ready_count;
+                }
+            }
 
-    void thread::start() const {
-        m_internals->m_callback_cv.notify_one();
-    }
-
-    void thread::shutdown()
-    {
-        {
-            std::unique_lock<std::mutex> lock(m_internals->m_callback_lock);
-            m_internals->m_closed = true;
+            if (ready_count > 0)
+            {
+                if (ready_count == 1)
+                {
+                    m_ready_cv.notify_one();
+                }
+                else
+                {
+                    m_ready_cv.notify_all();
+                }
+            }
         }
-        m_internals->m_callback_cv.notify_one();
-        m_thread.join();
     }
 
-    bool thread::is_free() const
+    void signalr_default_scheduler::internals::worker_loop()
     {
-        return !m_internals->m_busy;
+        while (true)
+        {
+            signalr_base_cb task;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_ready_cv.wait(lock, [this]() {
+                    return m_closed || !m_ready_tasks.empty();
+                });
+
+                if (m_ready_tasks.empty())
+                {
+                    if (m_closed)
+                    {
+                        return; // Thread terminates cleanly
+                    }
+                    continue;
+                }
+
+                task = std::move(m_ready_tasks.front());
+                m_ready_tasks.pop();
+            }
+
+            try
+            {
+                if (task)
+                {
+                    task();
+                }
+            }
+            catch (...)
+            {
+                // Unhandled callback exceptions do not kill the worker thread
+            }
+
+            // Destruct task outside the mutex lock to prevent deadlocks if a captured object's
+            // destructor schedules additional work.
+            task = nullptr;
+        }
     }
 
-    thread::~thread()
+    signalr_default_scheduler::signalr_default_scheduler(size_t thread_count)
+        : m_internals(std::make_shared<internals>(thread_count))
     {
-        shutdown();
+        m_internals->start();
+    }
+
+    void signalr_default_scheduler::schedule(const signalr_base_cb& cb)
+    {
+        schedule(cb, std::chrono::milliseconds::zero());
     }
 
     void signalr_default_scheduler::schedule(const signalr_base_cb& cb, const std::chrono::milliseconds delay)
     {
-        {
-            std::lock_guard<std::mutex> lock(m_internals->m_callback_lock);
-            assert(m_internals->m_closed == false);
-            m_internals->m_callbacks.emplace_back(cb, std::chrono::steady_clock::now() + delay);
-        } // unlock
-
-        // If callback has a delay, no point in running the logic to check if it should run early
-        if (delay == std::chrono::milliseconds::zero())
-        {
-            m_internals->m_callback_cv.notify_one();
-        }
+        m_internals->schedule(cb, delay);
     }
 
-    void signalr_default_scheduler::run() const {
-        auto internals = m_internals;
-
-        std::thread([=]()
-            {
-                std::vector<thread> threads{ 5 };
-
-                std::unique_lock<std::mutex> lock(internals->m_callback_lock);
-
-                auto prev_callback_count = size_t{ 0 };
-
-                while (true)
-                {
-                    auto& callbacks = internals->m_callbacks;
-                    const auto& closed = internals->m_closed;
-
-                    if (closed && callbacks.empty())
-                    {
-                        return;
-                    }
-
-                    internals->m_callback_cv.wait_for(lock, std::chrono::milliseconds(15),
-                        [&callbacks, &closed, &prev_callback_count]
-                        {
-                            return closed || prev_callback_count != callbacks.size();
-                        });
-
-                    // find the first callback that is ready to run, find a thread to run it and remove it from the list
-                    auto curr_time = std::chrono::steady_clock::now();
-                    auto it = callbacks.begin();
-                    while (it != callbacks.end())
-                    {
-                        auto found = false;
-                        if (it->second <= curr_time)
-                        {
-                            for (auto& thread : threads)
-                            {
-                                if (thread.is_free())
-                                {
-                                    {
-                                        thread.add(it->first);
-                                        it->first = nullptr;
-                                        // destruct callback in case the destructor can schedule a job which would throw on recursive lock acquisition
-                                    }
-                                    thread.start();
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found)
-                            {
-                                break;
-                            }
-                        }
-                        if (found)
-                        {
-                            it = callbacks.erase(it);
-                        }
-                        else
-                        {
-                            ++it;
-                        }
-                    }
-
-                    prev_callback_count = callbacks.size();
-                }
-
-                assert(internals->m_callbacks.empty());
-            }).detach();
-    }
-
-    void signalr_default_scheduler::close() const {
-        m_internals->m_closed = true;
-        m_internals->m_callback_cv.notify_one();
+    void signalr_default_scheduler::close()
+    {
+        m_internals->close();
     }
 
     signalr_default_scheduler::~signalr_default_scheduler()
@@ -201,22 +218,22 @@ namespace signalr
         close();
     }
 
-    // This will schedule the given func to run every second until the func returns true.
     void timer(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func)
     {
         timer_internal(scheduler, func, std::chrono::milliseconds::zero());
     }
 
-    void timer_internal(const std::shared_ptr<scheduler>& scheduler, const std::function<bool(std::chrono::milliseconds)>& func, std::chrono::milliseconds duration)
+    void timer_internal(const std::shared_ptr<scheduler>& scheduler,
+                        const std::function<bool(std::chrono::milliseconds)>& func,
+                        std::chrono::milliseconds duration)
     {
         constexpr auto tick = std::chrono::seconds(1);
         duration += tick;
-        scheduler->schedule([func, scheduler, duration]()
+        scheduler->schedule([func, scheduler, duration]() {
+            if (!func(duration))
             {
-                if (!func(duration))
-                {
-                    timer_internal(scheduler, func, duration);
-                }
-            }, tick);
+                timer_internal(scheduler, func, duration);
+            }
+        }, tick);
     }
 }

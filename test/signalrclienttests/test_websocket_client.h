@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "stdafx.h"
 #include <functional>
 #include "signalrclient/websocket_client.h"
 #include "test_utils.h"
@@ -17,24 +18,24 @@ class test_websocket_client : public websocket_client
 {
 public:
     test_websocket_client();
-    ~test_websocket_client();
+    ~test_websocket_client() override;
 
     void set_config(const signalr_client_config&);
 
-    void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback);
+    void start(const std::string& url, const std::function<void(const std::exception_ptr&)>& callback) override;
 
-    void stop(std::function<void(std::exception_ptr)> callback);
+    void stop(const std::function<void(const std::exception_ptr&)>& callback) override;
 
     void send(const std::string& payload, signalr::transfer_format transfer_format, const std::function<void(std::exception_ptr)>&
-              callback);
+              callback) override;
 
-    void receive(std::function<void(const std::string&, std::exception_ptr)> callback);
+    void receive(const std::function<void(std::string&&, const std::exception_ptr&)>& callback) override;
 
-    void set_connect_function(std::function<void(const std::string&, std::function<void(std::exception_ptr)>)> connect_function);
+    void set_connect_function(const std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>& connect_function);
 
-    void set_send_function(std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)> send_function);
+    void set_send_function(const std::function<void(const std::string& msg, std::function<void(std::exception_ptr)>)>& send_function);
 
-    void set_close_function(std::function<void(std::function<void(std::exception_ptr)>)> close_function);
+    void set_close_function(const std::function<void(std::function<void(std::exception_ptr)>)>& close_function);
 
     void receive_message(const std::string& message);
     void receive_message(std::exception_ptr ex);
@@ -63,6 +64,6 @@ private:
 };
 
 std::shared_ptr<test_websocket_client> create_test_websocket_client(
-    std::function<void(const std::string & msg, std::function<void(std::exception_ptr)>)> send_function = [](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(nullptr); },
-    std::function<void(const std::string&, std::function<void(std::exception_ptr)>)> connect_function = [](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(nullptr); },
-    std::function<void(std::function<void(std::exception_ptr)>)> close_function = [](std::function<void(std::exception_ptr)> callback) { callback(nullptr); }, bool ignore_pings = true);
+    const std::function<void(const std::string & msg, std::function<void(std::exception_ptr)>)>& send_function = [](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(nullptr); },
+    const std::function<void(const std::string&, std::function<void(std::exception_ptr)>)>& connect_function = [](const std::string&, std::function<void(std::exception_ptr)> callback) { callback(nullptr); },
+    const std::function<void(std::function<void(std::exception_ptr)>)>& close_function = [](std::function<void(std::exception_ptr)> callback) { callback(nullptr); }, bool ignore_pings = true);
