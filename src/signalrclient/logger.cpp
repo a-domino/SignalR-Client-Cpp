@@ -87,15 +87,19 @@ namespace signalr
             }
             catch (const std::exception &e)
             {
-                std::cerr << "error occurred when logging: " << e.what()
-                    << std::endl << "    entry: ";
-                std::cerr.write(entry, static_cast<std::streamsize>(entry_count)) << std::endl;
+                try {
+                    std::cerr << "error occurred when logging: " << e.what()
+                        << std::endl << "    entry: ";
+                    std::cerr.write(entry, static_cast<std::streamsize>(entry_count)) << std::endl;
+                } catch (...) {}
             }
             catch (...)
             {
-                std::cerr << "unknown error occurred when logging" << std::endl
-                          << "    entry: ";
-                std::cerr.write(entry, static_cast<std::streamsize>(entry_count)) << std::endl;
+                try {
+                    std::cerr << "unknown error occurred when logging" << std::endl
+                              << "    entry: ";
+                    std::cerr.write(entry, static_cast<std::streamsize>(entry_count)) << std::endl;
+                } catch (...) {}
             }
         }
     }
@@ -107,35 +111,45 @@ namespace signalr
             return;
         }
 
-        va_list args;
-        va_start(args, format);
+        try {
+            va_list args;
+            va_start(args, format);
 
-        char stack_buffer[1024];
-        va_list args_copy;
-        va_copy(args_copy, args);
-        const int written = vsnprintf(stack_buffer, sizeof(stack_buffer), format, args_copy);
-        va_end(args_copy);
+            char stack_buffer[1024];
+            va_list args_copy;
+            va_copy(args_copy, args);
+            const int written = vsnprintf(stack_buffer, sizeof(stack_buffer), format, args_copy);
+            va_end(args_copy);
 
-        if (written < 0)
-        {
+            if (written < 0)
+            {
+                va_end(args);
+                return;
+            }
+
+            const auto length = static_cast<size_t>(written);
+            if (length < sizeof(stack_buffer))
+            {
+                log(level, static_cast<const char*>(stack_buffer), length);
+            }
+            else
+            {
+                // Allocate once only if entry exceeds stack buffer
+                std::vector<char> heap_buffer(length + 1);
+                vsnprintf(heap_buffer.data(), heap_buffer.size(), format, args);
+                log(level, static_cast<const char*>(heap_buffer.data()), length);
+            }
+
             va_end(args);
-            return;
+        } catch (const std::exception& e) {
+            try {
+                std::cerr << "error occurred while formatting logf entry: " << e.what() << std::endl;
+            } catch (...) {}
+        } catch (...) {
+            try {
+                std::cerr << "unknown error occurred while formatting logf entry" << std::endl;
+            } catch (...) {}
         }
-
-        const auto length = static_cast<size_t>(written);
-        if (length < sizeof(stack_buffer))
-        {
-            log(level, static_cast<const char*>(stack_buffer), length);
-        }
-        else
-        {
-            // Allocate once only if entry exceeds stack buffer
-            std::vector<char> heap_buffer(length + 1);
-            vsnprintf(heap_buffer.data(), heap_buffer.size(), format, args);
-            log(level, static_cast<const char*>(heap_buffer.data()), length);
-        }
-
-        va_end(args);
     }
 
     void logger::write_trace_level(const trace_level trace_level, std::ostream& stream)

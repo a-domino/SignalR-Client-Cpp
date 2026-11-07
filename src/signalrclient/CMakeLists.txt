@@ -2,7 +2,6 @@ set (SOURCES
   hub_callback_manager.cpp
   cancellation_token.cpp
   connection_impl.cpp
-  handshake_protocol.cpp
   hub_connection.cpp
   hub_connection_builder.cpp
   hub_connection_impl.cpp

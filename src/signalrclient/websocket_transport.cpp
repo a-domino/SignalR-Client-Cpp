@@ -15,7 +15,6 @@
 #endif
 
 #include <atomic>
-#include <future>
 #include <utility>
 #include <vector>
 
@@ -29,10 +28,7 @@ namespace {
 
 using completion_callback = std::function<void(const std::exception_ptr&)>;
 
-completion_callback make_safe_callback(
-    const completion_callback& callback,
-    const logger& logger
-) {
+completion_callback make_safe_callback(const completion_callback& callback, const logger& logger) {
     if (!callback) {
         return [](const std::exception_ptr&) {};
     }
@@ -42,16 +38,20 @@ completion_callback make_safe_callback(
             try {
                 callback(ex);
             } catch (const std::exception& e) {
-                logger.logv(
-                    trace_level::error,
-                    "[websocket transport] user callback threw an exception: ",
-                    e.what()
-                );
+                try {
+                    logger.logv(
+                        trace_level::error,
+                        "[websocket transport] user callback threw an exception: ",
+                        e.what()
+                    );
+                } catch (...) {}
             } catch (...) {
-                logger.log(
-                    trace_level::error,
-                    "[websocket transport] user callback threw an unknown exception"
-                );
+                try {
+                    logger.log(
+                        trace_level::error,
+                        "[websocket transport] user callback threw an unknown exception"
+                    );
+                } catch (...) {}
             }
         }
     };
@@ -69,12 +69,10 @@ enum class session_state {
 class connection_session : public std::enable_shared_from_this<connection_session> {
 public:
     connection_session(
-        uint64_t id,
-        std::shared_ptr<websocket_client> client,
+        const uint64_t id,
         std::weak_ptr<websocket_transport> transport,
         const logger& logger
     ) : m_id(id),
-        m_client(std::move(client)),
         m_transport(std::move(transport)),
         m_logger(logger),
         m_state(session_state::connecting),
@@ -95,18 +93,43 @@ public:
         return m_state == session_state::disconnected;
     }
 
+    void abort_creation(const std::exception_ptr& ex) noexcept {
+        std::vector<completion_callback> stop_cbs;
+        std::shared_ptr<websocket_client> client_to_release;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_state = session_state::disconnected;
+            stop_cbs.swap(m_stop_callbacks);
+            client_to_release = std::move(m_client);
+        }
+        auto transport = m_transport.lock();
+        if (transport) {
+            transport->clear_active_session(m_id);
+        }
+        for (const auto& cb : stop_cbs) {
+            try {
+                cb(ex);
+            } catch (...) {}
+        }
+        client_to_release.reset();
+    }
+
     void start(
+        std::shared_ptr<websocket_client> client,
         const std::string& url,
         const completion_callback& user_callback
     ) noexcept {
         auto safe_cb = make_safe_callback(user_callback, m_logger);
         try {
             bool already_canceled = false;
+            std::shared_ptr<websocket_client> client_to_release;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 if (m_state == session_state::disconnecting || m_state == session_state::disconnected) {
                     already_canceled = true;
+                    client_to_release = std::move(client);
                 } else {
+                    m_client = std::move(client);
                     m_receive_token_source->reset();
                 }
             }
@@ -114,175 +137,182 @@ public:
             if (already_canceled) {
                 safe_cb(std::make_exception_ptr(signalr::canceled_exception()));
                 complete_stop(nullptr);
+                client_to_release.reset();
                 return;
             }
 
-            auto weak_self = std::weak_ptr<connection_session>(shared_from_this());
+            auto self = shared_from_this();
 
-            std::shared_ptr<websocket_client> client;
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                client = m_client;
-            }
+            m_client->start(url, [self, safe_cb](const std::exception_ptr& ex_ptr) {
+                bool abort_connection = false;
+                bool is_failure = false;
+                std::vector<completion_callback> stop_cbs;
+                std::shared_ptr<websocket_client> client_to_release;
 
-            if (!client) {
-                safe_cb(std::make_exception_ptr(signalr_exception("client is null")));
-                return;
-            }
+                {
+                    std::lock_guard<std::mutex> lock(self->m_mutex);
+                    if (self->m_start_completed) {
+                        return; // Drop duplicate start completions
+                    }
+                    self->m_start_completed = true;
 
-            client->start(
-                url,
-                [weak_self, safe_cb](const std::exception_ptr& ex_ptr) {
-                    auto session = weak_self.lock();
-                    if (!session) {
-                        safe_cb(std::make_exception_ptr(signalr_exception("connection session no longer exists")));
+                    if (self->m_state == session_state::connecting) {
+                        if (ex_ptr == nullptr) {
+                            self->m_state = session_state::connected;
+                        } else {
+                            self->m_state = session_state::disconnected;
+                            is_failure = true;
+                            stop_cbs.swap(self->m_stop_callbacks);
+                            client_to_release = std::move(self->m_client);
+                        }
+                    } else if (self->m_state == session_state::disconnecting) {
+                        if (ex_ptr == nullptr) {
+                            abort_connection = true;
+                        } else {
+                            self->m_state = session_state::disconnected;
+                            is_failure = true;
+                            stop_cbs.swap(self->m_stop_callbacks);
+                            client_to_release = std::move(self->m_client);
+                        }
+                    } else {
                         return;
                     }
+                }
 
-                    bool abort_connection = false;
-                    bool is_failure = false;
-                    std::vector<completion_callback> stop_cbs;
-
-                    {
-                        std::lock_guard<std::mutex> lock(session->m_mutex);
-                        if (session->m_start_completed) {
-                            return; // Drop duplicate start completions
-                        }
-                        session->m_start_completed = true;
-
-                        if (session->m_state == session_state::connecting) {
-                            if (ex_ptr == nullptr) {
-                                session->m_state = session_state::connected;
-                                session->m_has_connected = true;
-                            } else {
-                                session->m_state = session_state::disconnected;
-                                is_failure = true;
-                                stop_cbs.swap(session->m_stop_callbacks);
-                            }
-                        } else if (session->m_state == session_state::disconnecting) {
-                            if (ex_ptr == nullptr) {
-                                abort_connection = true;
-                            } else {
-                                session->m_state = session_state::disconnected;
-                                is_failure = true;
-                                stop_cbs.swap(session->m_stop_callbacks);
-                            }
-                        } else {
-                            return;
-                        }
-                    }
-
-                    if (is_failure) {
+                if (is_failure) {
+                    try {
+                        std::rethrow_exception(ex_ptr);
+                    } catch (const std::exception& e) {
                         try {
-                            std::rethrow_exception(ex_ptr);
-                        } catch (const std::exception& e) {
-                            session->m_logger.log(
+                            self->m_logger.log(
                                 trace_level::error,
-                                std::string("[websocket transport] exception when connecting to the server: ")
-                                    .append(e.what())
+                                std::string(
+                                    "[websocket transport] exception when connecting to the server: "
+                                ).append(e.what())
                             );
-                        } catch (...) {
-                            session->m_logger.log(
+                        } catch (...) {}
+                    } catch (...) {
+                        try {
+                            self->m_logger.log(
                                 trace_level::error,
                                 "[websocket transport] unknown exception when connecting to the server"
                             );
-                        }
-
-                        auto transport = session->m_transport.lock();
-                        if (transport) {
-                            transport->clear_active_session(session->m_id);
-                        }
-
-                        safe_cb(ex_ptr);
-
-                        for (const auto& cb : stop_cbs) {
-                            try {
-                                cb(nullptr);
-                            } catch (...) {}
-                        }
-                        return;
+                        } catch (...) {}
                     }
 
-                    if (abort_connection) {
-                        std::shared_ptr<websocket_client> client_to_stop;
-                        {
-                            std::lock_guard<std::mutex> lock(session->m_mutex);
-                            client_to_stop = std::move(session->m_client);
-                        }
-
-                        if (client_to_stop) {
-                            try {
-                                client_to_stop->stop(
-                                    [session](const std::exception_ptr& err) {
-                                        session->complete_stop(err);
-                                    }
-                                );
-                            } catch (...) {
-                                session->complete_stop(std::current_exception());
-                            }
-                        } else {
-                            session->complete_stop(nullptr);
-                        }
-
-                        safe_cb(std::make_exception_ptr(signalr::canceled_exception()));
-                        return;
+                    auto transport = self->m_transport.lock();
+                    if (transport) {
+                        transport->clear_active_session(self->m_id);
                     }
 
+                    safe_cb(ex_ptr);
+
+                    for (const auto& cb : stop_cbs) {
+                        try {
+                            cb(nullptr);
+                        } catch (...) {}
+                    }
+                    client_to_release.reset();
+                    return;
+                }
+
+                if (abort_connection) {
+                    std::shared_ptr<websocket_client> client_to_stop;
+                    {
+                        std::lock_guard<std::mutex> lock(self->m_mutex);
+                        client_to_stop = std::move(self->m_client);
+                    }
+
+                    if (client_to_stop) {
+                        try {
+                            client_to_stop->stop([self](const std::exception_ptr& err) {
+                                self->complete_stop(err);
+                            });
+                        } catch (...) {
+                            self->complete_stop(std::current_exception());
+                        }
+                    } else {
+                        self->complete_stop(nullptr);
+                    }
+
+                    safe_cb(std::make_exception_ptr(signalr::canceled_exception()));
+                    return;
+                }
+
+                try {
+                    self->receive_loop(true);
+                    {
+                        std::lock_guard<std::mutex> lock(self->m_mutex);
+                        self->m_has_connected = true;
+                    }
+                    safe_cb(nullptr);
+                } catch (...) {
+                    auto receive_ex = std::current_exception();
                     try {
-                        session->receive_loop(true);
-                        safe_cb(nullptr);
-                    } catch (...) {
-                        auto receive_ex = std::current_exception();
-                        session->m_logger.log(
+                        self->m_logger.log(
                             trace_level::error,
                             "[websocket transport] exception while registering first receive loop"
                         );
+                    } catch (...) {}
 
-                        std::shared_ptr<websocket_client> client_to_stop;
-                        {
-                            std::lock_guard<std::mutex> lock(session->m_mutex);
-                            session->m_state = session_state::disconnecting;
-                            client_to_stop = std::move(session->m_client);
-                        }
-
-                        if (client_to_stop) {
-                            try {
-                                client_to_stop->stop(
-                                    [session](const std::exception_ptr&) {
-                                        session->complete_stop(nullptr);
-                                    }
-                                );
-                            } catch (...) {
-                                session->complete_stop(nullptr);
-                            }
+                    std::shared_ptr<websocket_client> client_to_stop;
+                    bool stop_already_in_progress = false;
+                    {
+                        std::lock_guard<std::mutex> lock(self->m_mutex);
+                        if (self->m_state == session_state::disconnecting) {
+                            stop_already_in_progress = true;
                         } else {
-                            session->complete_stop(nullptr);
+                            self->m_state = session_state::disconnecting;
+                            client_to_stop = std::move(self->m_client);
                         }
-
-                        safe_cb(receive_ex);
+                        self->m_has_connected = false;
                     }
+
+                    if (stop_already_in_progress) {
+                        safe_cb(receive_ex);
+                        return;
+                    }
+
+                    if (client_to_stop) {
+                        try {
+                            client_to_stop->stop([self](const std::exception_ptr&) {
+                                self->complete_stop(nullptr);
+                            });
+                        } catch (...) {
+                            self->complete_stop(nullptr);
+                        }
+                    } else {
+                        self->complete_stop(nullptr);
+                    }
+
+                    safe_cb(receive_ex);
                 }
-            );
+            });
         } catch (const std::exception& e) {
             auto ex = std::current_exception();
             bool already_started = false;
             std::vector<completion_callback> stop_cbs;
+            std::shared_ptr<websocket_client> client_to_release;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                if (m_state == session_state::connected) {
+                if (m_has_connected) {
                     already_started = true;
                 } else {
                     m_state = session_state::disconnected;
                     stop_cbs.swap(m_stop_callbacks);
+                    client_to_release = std::move(m_client);
                 }
             }
 
             if (!already_started) {
-                m_logger.log(
-                    trace_level::error,
-                    std::string("[websocket transport] exception when connecting to the server: ")
-                        .append(e.what())
-                );
+                try {
+                    m_logger.log(
+                        trace_level::error,
+                        std::string(
+                            "[websocket transport] exception when connecting to the server: "
+                        ).append(e.what())
+                    );
+                } catch (...) {}
                 auto transport = m_transport.lock();
                 if (transport) {
                     transport->clear_active_session(m_id);
@@ -293,26 +323,31 @@ public:
                         cb(nullptr);
                     } catch (...) {}
                 }
+                client_to_release.reset();
             }
         } catch (...) {
             auto ex = std::current_exception();
             bool already_started = false;
             std::vector<completion_callback> stop_cbs;
+            std::shared_ptr<websocket_client> client_to_release;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                if (m_state == session_state::connected) {
+                if (m_has_connected) {
                     already_started = true;
                 } else {
                     m_state = session_state::disconnected;
                     stop_cbs.swap(m_stop_callbacks);
+                    client_to_release = std::move(m_client);
                 }
             }
 
             if (!already_started) {
-                m_logger.log(
-                    trace_level::error,
-                    "[websocket transport] unknown exception when connecting to the server"
-                );
+                try {
+                    m_logger.log(
+                        trace_level::error,
+                        "[websocket transport] unknown exception when connecting to the server"
+                    );
+                } catch (...) {}
                 auto transport = m_transport.lock();
                 if (transport) {
                     transport->clear_active_session(m_id);
@@ -323,6 +358,7 @@ public:
                         cb(nullptr);
                     } catch (...) {}
                 }
+                client_to_release.reset();
             }
         }
     }
@@ -356,44 +392,47 @@ public:
             }
 
             if (initiate_client_stop) {
-                m_logger.log(
-                    trace_level::debug,
-                    "stopping websocket transport"
-                );
+                try {
+                    m_logger.log(trace_level::debug, "stopping websocket transport");
+                } catch (...) {}
 
                 if (client_to_stop) {
-                    // MUST BE CAPTURED BY VALUE TO PREVENT DANGLING STACK REFERENCES
                     auto self = shared_from_this();
-                    logger logger = m_logger;
+                    auto logger = m_logger;
 
                     try {
-                        client_to_stop->stop(
-                            [self, logger](const std::exception_ptr& ex_ptr) {
-                                if (ex_ptr != nullptr) {
+                        client_to_stop->stop([self, logger](const std::exception_ptr& ex_ptr) {
+                            if (ex_ptr != nullptr) {
+                                try {
+                                    std::rethrow_exception(ex_ptr);
+                                } catch (const std::exception& e) {
                                     try {
-                                        std::rethrow_exception(ex_ptr);
-                                    } catch (const std::exception& e) {
-                                        logger.logv(
-                                            trace_level::error,
-                                            "websocket transport stopped with error: ",
-                                            e.what()
-                                        );
-                                    } catch (...) {
-                                        logger.log(
-                                            trace_level::error,
-                                            "websocket transport stopped with unknown error"
-                                        );
-                                    }
-                                } else {
-                                    logger.log(
-                                        trace_level::debug,
-                                        "websocket transport stopped"
-                                    );
+                                        if (logger.is_enabled(trace_level::error)) {
+                                            logger.logv(
+                                                trace_level::error,
+                                                "websocket transport stopped with error: ",
+                                                e.what()
+                                            );
+                                        }
+                                    } catch (...) {}
+                                } catch (...) {
+                                    try {
+                                        if (logger.is_enabled(trace_level::error)) {
+                                            logger.log(
+                                                trace_level::error,
+                                                "websocket transport stopped with unknown error"
+                                            );
+                                        }
+                                    } catch (...) {}
                                 }
-
-                                self->complete_stop(ex_ptr);
+                            } else {
+                                try {
+                                    logger.log(trace_level::debug, "websocket transport stopped");
+                                } catch (...) {}
                             }
-                        );
+
+                            self->complete_stop(ex_ptr);
+                        });
                     } catch (...) {
                         complete_stop(std::current_exception());
                     }
@@ -428,14 +467,9 @@ public:
                 return;
             }
 
-            // Called strictly outside m_mutex to prevent deadlocks when callbacks invoke stop() synchronously
-            client->send(
-                payload,
-                format,
-                [safe_cb](const std::exception_ptr& exception) {
-                    safe_cb(exception);
-                }
-            );
+            client->send(payload, format, [safe_cb](const std::exception_ptr& exception) {
+                safe_cb(exception);
+            });
         } catch (...) {
             safe_cb(std::current_exception());
         }
@@ -452,22 +486,32 @@ public:
         }
 
         struct loop_guard {
-            std::mutex& mtx;
+            std::mutex& m;
             bool& looping;
+            bool armed;
+            loop_guard(std::mutex& mtx, bool& loop_flag) : m(mtx), looping(loop_flag), armed(true) {}
             ~loop_guard() {
-                std::lock_guard<std::mutex> lock(mtx);
-                looping = false;
+                if (armed) {
+                    std::lock_guard<std::mutex> lock(m);
+                    looping = false;
+                }
             }
-        } guard{m_mutex, m_is_looping};
+            void dismiss() {
+                armed = false;
+            }
+        } guard(m_mutex, m_is_looping);
 
         auto weak_self = std::weak_ptr<connection_session>(shared_from_this());
         auto token_source = m_receive_token_source;
+        bool is_first_registration = is_initial;
 
         while (true) {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_should_continue = false;
                 if (m_state != session_state::connected) {
+                    m_is_looping = false;
+                    guard.dismiss();
                     break;
                 }
             }
@@ -480,125 +524,140 @@ public:
             }
 
             if (!client) {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_is_looping = false;
+                guard.dismiss();
                 break;
             }
 
             try {
-                client->receive(
-                    [weak_self, token_source, one_shot_guard](
-                        std::string&& message,
-                        std::exception_ptr exception
-                    ) {
-                        if (one_shot_guard->exchange(true)) {
-                            return; // Drop duplicate invocations of the same receive registration
-                        }
+                client->receive([weak_self, token_source, one_shot_guard](
+                    std::string&& message,
+                    std::exception_ptr exception
+                ) {
+                    if (one_shot_guard->exchange(true)) {
+                        return;
+                    }
 
-                        auto session = weak_self.lock();
-                        if (!session) {
-                            token_source->cancel();
-                            return;
-                        }
+                    auto session = weak_self.lock();
+                    if (!session) {
+                        token_source->cancel();
+                        return;
+                    }
 
-                        bool is_connected;
-                        {
-                            std::lock_guard<std::mutex> lock(session->m_mutex);
-                            is_connected = (session->m_state == session_state::connected);
+                    bool is_connected;
+                    {
+                        std::lock_guard<std::mutex> lock(session->m_mutex);
+                        is_connected = (session->m_state == session_state::connected);
+                        if (is_connected && !message.empty()) {
+                            session->m_has_connected = true;
                         }
-                        if (!is_connected) {
-                            token_source->cancel();
-                            return;
-                        }
+                    }
+                    if (!is_connected) {
+                        token_source->cancel();
+                        return;
+                    }
 
-                        if (exception != nullptr) {
+                    if (exception != nullptr) {
+                        try {
+                            std::rethrow_exception(exception);
+                        } catch (const std::exception& e) {
                             try {
-                                std::rethrow_exception(exception);
-                            } catch (const std::exception& e) {
                                 session->m_logger.logv(
                                     trace_level::error,
                                     "[websocket transport] error receiving response from websocket: ",
                                     e.what()
                                 );
-                            } catch (...) {
+                            } catch (...) {}
+                        } catch (...) {
+                            try {
                                 session->m_logger.log(
                                     trace_level::error,
-                                    "[websocket transport] unknown error occurred when receiving response from websocket"
+                                    "[websocket transport] unknown error "
+                                    "occurred when receiving response from websocket"
                                 );
-                                exception = std::make_exception_ptr(signalr_exception("unknown error"));
+                            } catch (...) {}
+                            exception = std::make_exception_ptr(signalr_exception("unknown error"));
+                        }
+
+                        bool was_connected = false;
+                        std::shared_ptr<websocket_client> client_to_stop;
+                        {
+                            std::lock_guard<std::mutex> lock(session->m_mutex);
+                            if (session->m_state == session_state::connected) {
+                                was_connected = true;
+                                session->m_state = session_state::disconnecting;
+                                client_to_stop = std::move(session->m_client);
                             }
+                        }
 
-                            bool was_connected = false;
-                            std::shared_ptr<websocket_client> client_to_stop;
-                            {
-                                std::lock_guard<std::mutex> lock(session->m_mutex);
-                                if (session->m_state == session_state::connected) {
-                                    was_connected = true;
-                                    session->m_state = session_state::disconnecting;
-                                    client_to_stop = std::move(session->m_client);
-                                }
-                            }
+                        token_source->cancel();
 
-                            token_source->cancel();
+                        if (!was_connected) {
+                            return;
+                        }
 
-                            if (!was_connected) {
-                                return;
-                            }
-
-                            if (client_to_stop) {
-                                auto self = session;
+                        if (client_to_stop) {
+                            const auto& self = session;
+                            try {
+                                client_to_stop->stop([self, exception](const std::exception_ptr&) {
+                                    self->complete_stop(exception);
+                                });
+                            } catch (const std::exception& e) {
                                 try {
-                                    client_to_stop->stop(
-                                        [self, exception](const std::exception_ptr&) {
-                                            self->complete_stop(exception);
-                                        }
-                                    );
-                                } catch (const std::exception& e) {
                                     session->m_logger.logv(
                                         trace_level::error,
                                         "[websocket transport] exception while stopping client after receive error: ",
                                         e.what()
                                     );
-                                    session->complete_stop(exception);
-                                } catch (...) {
+                                } catch (...) {}
+                                session->complete_stop(exception);
+                            } catch (...) {
+                                try {
                                     session->m_logger.log(
                                         trace_level::error,
-                                        "[websocket transport] unknown exception while stopping client after receive error"
+                                        "[websocket transport] unknown exception "
+                                        "while stopping client after receive error"
                                     );
-                                    session->complete_stop(exception);
-                                }
-                            } else {
+                                } catch (...) {}
                                 session->complete_stop(exception);
                             }
-                            return;
-                        }
-
-                        auto transport = session->m_transport.lock();
-                        if (transport) {
-                            transport->notify_receive(session->m_id, std::move(message));
-                        }
-
-                        bool continue_receiving;
-                        {
-                            std::lock_guard<std::mutex> lock(session->m_mutex);
-                            continue_receiving = (session->m_state == session_state::connected);
-                        }
-
-                        if (continue_receiving) {
-                            session->receive_loop(false);
                         } else {
-                            token_source->cancel();
+                            session->complete_stop(exception);
                         }
+                        return;
                     }
-                );
+
+                    auto transport = session->m_transport.lock();
+                    if (transport) {
+                        transport->notify_receive(session->m_id, std::move(message));
+                    }
+
+                    bool continue_receiving;
+                    {
+                        std::lock_guard<std::mutex> lock(session->m_mutex);
+                        continue_receiving = (session->m_state == session_state::connected);
+                    }
+
+                    if (continue_receiving) {
+                        session->receive_loop(false);
+                    } else {
+                        token_source->cancel();
+                    }
+                });
+                is_first_registration = false;
             } catch (...) {
-                if (is_initial) {
+                if (is_first_registration) {
                     throw; // Initial registration error bubbles to start() handler
                 }
 
                 auto reg_ex = std::current_exception();
-                m_logger.log(
-                    trace_level::error,
-                    "[websocket transport] exception occurred while re-registering receive callback"
-                );
+                try {
+                    m_logger.log(
+                        trace_level::error,
+                        "[websocket transport] exception occurred while re-registering receive callback"
+                    );
+                } catch (...) {}
 
                 bool was_connected = false;
                 std::shared_ptr<websocket_client> client_to_stop;
@@ -617,11 +676,9 @@ public:
                     if (client_to_stop) {
                         auto self = shared_from_this();
                         try {
-                            client_to_stop->stop(
-                                [self, reg_ex](const std::exception_ptr&) {
-                                    self->complete_stop(reg_ex);
-                                }
-                            );
+                            client_to_stop->stop([self, reg_ex](const std::exception_ptr&) {
+                                self->complete_stop(reg_ex);
+                            });
                         } catch (...) {
                             complete_stop(reg_ex);
                         }
@@ -629,12 +686,17 @@ public:
                         complete_stop(reg_ex);
                     }
                 }
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_is_looping = false;
+                guard.dismiss();
                 break;
             }
 
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 if (!m_should_continue) {
+                    m_is_looping = false;
+                    guard.dismiss();
                     break;
                 }
             }
@@ -644,6 +706,7 @@ public:
     void complete_stop(const std::exception_ptr& exception) {
         std::vector<completion_callback> callbacks;
         bool should_notify = false;
+        std::shared_ptr<websocket_client> client_to_release;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (m_state != session_state::disconnected) {
@@ -651,7 +714,7 @@ public:
                 should_notify = m_has_connected;
             }
             callbacks.swap(m_stop_callbacks);
-            m_client = nullptr; // Breaks DAG ownership cycles
+            client_to_release = std::move(m_client);
         }
 
         m_receive_token_source->cancel();
@@ -670,6 +733,8 @@ public:
                 cb(exception);
             } catch (...) {}
         }
+
+        client_to_release.reset();
     }
 
 private:
@@ -721,23 +786,7 @@ websocket_transport::~websocket_transport() {
     }
 
     if (session) {
-        try {
-            auto promise = std::make_shared<std::promise<void>>();
-            session->stop(
-                [promise](const std::exception_ptr&) {
-                    try {
-                        promise->set_value();
-                    } catch (...) {}
-                }
-            );
-            auto future = promise->get_future();
-            if (future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
-                m_logger.log(
-                    trace_level::warning,
-                    "[websocket transport] timeout waiting for transport shutdown in destructor"
-                );
-            }
-        } catch (...) {}
+        session->stop([](const std::exception_ptr&) {});
     }
 }
 
@@ -749,54 +798,24 @@ void websocket_transport::start(
     const std::string& url,
     const std::function<void(const std::exception_ptr&)>& user_callback
 ) noexcept {
-    auto safe_cb = make_safe_callback(user_callback, m_logger);
     try {
+        auto safe_cb = make_safe_callback(user_callback, m_logger);
+
         const signalr::uri uri(url);
         if (uri.scheme() != "ws" && uri.scheme() != "wss") {
             safe_cb(std::make_exception_ptr(signalr_exception("url must have 'ws' or 'wss' scheme")));
             return;
         }
 
+        std::shared_ptr<connection_session> new_session;
         bool already_connected = false;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_active_session && !m_active_session->is_disconnected()) {
-                already_connected = true;
-            }
-        }
-
-        if (already_connected) {
-            safe_cb(std::make_exception_ptr(signalr_exception("transport already connected")));
-            return;
-        }
-
-        const auto query_start = url.find('?');
-        m_logger.log(
-            trace_level::info,
-            "[websocket transport] connecting to: " + url.substr(0, query_start)
-        );
-
-        std::shared_ptr<websocket_client> websocket_client;
-        try {
-            websocket_client = m_websocket_client_factory(m_signalr_client_config);
-            if (!websocket_client) {
-                safe_cb(std::make_exception_ptr(signalr_exception("websocket client factory returned null")));
-                return;
-            }
-        } catch (...) {
-            safe_cb(std::current_exception());
-            return;
-        }
-
-        std::shared_ptr<connection_session> new_session;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_active_session && !m_active_session->is_disconnected()) {
+            if (m_active_session != nullptr) {
                 already_connected = true;
             } else {
                 new_session = std::make_shared<connection_session>(
                     ++m_next_session_id,
-                    websocket_client,
                     std::weak_ptr<websocket_transport>(shared_from_this()),
                     m_logger
                 );
@@ -809,26 +828,58 @@ void websocket_transport::start(
             return;
         }
 
-        new_session->start(url, safe_cb);
+        std::shared_ptr<websocket_client> websocket_client;
+        try {
+            const auto query_start = url.find('?');
+            try {
+                m_logger.log(
+                    trace_level::info,
+                    "[websocket transport] connecting to: " + url.substr(0, query_start)
+                );
+            } catch (...) {}
+
+            websocket_client = m_websocket_client_factory(m_signalr_client_config);
+            if (!websocket_client) {
+                throw signalr_exception("websocket client factory returned null");
+            }
+        } catch (...) {
+            new_session->abort_creation(std::current_exception());
+            safe_cb(std::current_exception());
+            return;
+        }
+
+        new_session->start(websocket_client, url, safe_cb);
     } catch (...) {
-        safe_cb(std::current_exception());
+        if (user_callback) {
+            try {
+                user_callback(std::current_exception());
+            } catch (...) {}
+        }
     }
 }
 
 void websocket_transport::stop(const std::function<void(const std::exception_ptr&)>& user_callback) noexcept {
-    auto safe_cb = make_safe_callback(user_callback, m_logger);
-    std::shared_ptr<connection_session> session;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        session = m_active_session;
-    }
+    try {
+        auto safe_cb = make_safe_callback(user_callback, m_logger);
+        std::shared_ptr<connection_session> session;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            session = m_active_session;
+        }
 
-    if (!session || session->is_disconnected()) {
-        safe_cb(nullptr);
-        return;
-    }
+        if (!session || session->is_disconnected()) {
+            safe_cb(nullptr);
+            return;
+        }
 
-    session->stop(safe_cb);
+        session->stop(safe_cb);
+    } catch (...) {
+        if (user_callback) {
+            try {
+                user_callback(std::current_exception());
+            } catch (...) {}
+        }
+    }
 }
 
 void websocket_transport::on_close(const std::function<void(const std::exception_ptr&)>& callback) {
@@ -848,24 +899,32 @@ void websocket_transport::send(
     transfer_format transfer_format,
     const std::function<void(const std::exception_ptr&)>& user_callback
 ) noexcept {
-    auto safe_cb = make_safe_callback(user_callback, m_logger);
-    std::shared_ptr<connection_session> session;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        session = m_active_session;
-    }
+    try {
+        auto safe_cb = make_safe_callback(user_callback, m_logger);
+        std::shared_ptr<connection_session> session;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            session = m_active_session;
+        }
 
-    if (!session) {
-        safe_cb(std::make_exception_ptr(
-            signalr_exception("cannot send data when transport is not connected")
-        ));
-        return;
-    }
+        if (!session) {
+            safe_cb(
+                std::make_exception_ptr(signalr_exception("cannot send data when transport is not connected"))
+            );
+            return;
+        }
 
-    session->send(payload, transfer_format, safe_cb);
+        session->send(payload, transfer_format, safe_cb);
+    } catch (...) {
+        if (user_callback) {
+            try {
+                user_callback(std::current_exception());
+            } catch (...) {}
+        }
+    }
 }
 
-void websocket_transport::notify_receive(uint64_t session_id, std::string&& message) const {
+void websocket_transport::notify_receive(const uint64_t session_id, std::string&& message) const {
     std::function<void(std::string&&, const std::exception_ptr&)> callback;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -879,16 +938,20 @@ void websocket_transport::notify_receive(uint64_t session_id, std::string&& mess
         try {
             callback(std::move(message), nullptr);
         } catch (const std::exception& e) {
-            m_logger.logv(
-                trace_level::error,
-                "[websocket transport] exception in on_receive: ",
-                e.what()
-            );
+            try {
+                m_logger.logv(
+                    trace_level::error,
+                    "[websocket transport] exception in on_receive: ",
+                    e.what()
+                );
+            } catch (...) {}
         } catch (...) {
-            m_logger.log(
-                trace_level::error,
-                "[websocket transport] unknown exception in on_receive"
-            );
+            try {
+                m_logger.log(
+                    trace_level::error,
+                    "[websocket transport] unknown exception in on_receive"
+                );
+            } catch (...) {}
         }
     }
 }
@@ -908,21 +971,25 @@ void websocket_transport::notify_close(uint64_t session_id, const std::exception
         try {
             callback(exception);
         } catch (const std::exception& e) {
-            m_logger.logv(
-                trace_level::error,
-                "[websocket transport] exception in on_close: ",
-                e.what()
-            );
+            try {
+                m_logger.logv(
+                    trace_level::error,
+                    "[websocket transport] exception in on_close: ",
+                    e.what()
+                );
+            } catch (...) {}
         } catch (...) {
-            m_logger.log(
-                trace_level::error,
-                "[websocket transport] unknown exception in on_close"
-            );
+            try {
+                m_logger.log(
+                    trace_level::error,
+                    "[websocket transport] unknown exception in on_close"
+                );
+            } catch (...) {}
         }
     }
 }
 
-void websocket_transport::clear_active_session(uint64_t session_id) {
+void websocket_transport::clear_active_session(const uint64_t session_id) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_active_session && m_active_session->id() == session_id) {
         m_active_session = nullptr;

@@ -40,7 +40,6 @@ list (APPEND SOURCES
   ../../src/signalrclient/hub_callback_manager.cpp
   ../../src/signalrclient/cancellation_token.cpp
   ../../src/signalrclient/connection_impl.cpp
-  ../../src/signalrclient/handshake_protocol.cpp
   ../../src/signalrclient/hub_connection.cpp
   ../../src/signalrclient/hub_connection_builder.cpp
   ../../src/signalrclient/hub_connection_impl.cpp

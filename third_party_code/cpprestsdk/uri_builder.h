@@ -222,9 +222,10 @@ namespace signalr
         /// </summary>
         /// <param name="name">The name portion of the query string</param>
         /// <param name="value">The value portion of the query string</param>
+        /// <param name="do_encoding"></param>
         /// <returns>A reference to this uri_builder to support chaining.</returns>
         template<typename T>
-        uri_builder& append_query(const std::string& name, const T& value, bool do_encoding = true) {
+        uri_builder& append_query(const std::string& name, const T& value, const bool do_encoding = true) {
             std::ostringstream ss;
             ss.imbue(std::locale::classic());
             ss << value;

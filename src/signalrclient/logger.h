@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstring>
+#include <iostream>
 #include <memory>
 
 #include "signalrclient/log_entry_handler.h"
@@ -43,44 +44,54 @@ namespace signalr
                 return;
             }
 
-            const string_piece pieces[] = { first, second, rest... };
-            constexpr size_t count = sizeof...(rest) + 2;
+            try {
+                const string_piece pieces[] = { first, second, rest... };
+                constexpr size_t count = sizeof...(rest) + 2;
 
-            size_t total_length = 0;
-            for (size_t i = 0; i < count; ++i)
-            {
-                total_length += pieces[i].size;
-            }
-
-            // Stack buffer handles the vast majority of log messages without heap allocation
-            constexpr size_t stack_capacity = 1024;
-            if (total_length < stack_capacity)
-            {
-                char buffer[stack_capacity];
-                char* dest = buffer;
+                size_t total_length = 0;
                 for (size_t i = 0; i < count; ++i)
                 {
-                    if (pieces[i].size > 0)
-                    {
-                        std::memcpy(dest, pieces[i].data, pieces[i].size);
-                        dest += pieces[i].size;
-                    }
+                    total_length += pieces[i].size;
                 }
-                log(level, buffer, total_length);
-            }
-            else
-            {
-                // Fallback for unusually large log entries
-                std::string buffer;
-                buffer.reserve(total_length);
-                for (size_t i = 0; i < count; ++i)
+
+                // Stack buffer handles the vast majority of log messages without heap allocation
+                constexpr size_t stack_capacity = 1024;
+                if (total_length < stack_capacity)
                 {
-                    if (pieces[i].size > 0)
+                    char buffer[stack_capacity];
+                    char* dest = buffer;
+                    for (size_t i = 0; i < count; ++i)
                     {
-                        buffer.append(pieces[i].data, pieces[i].size);
+                        if (pieces[i].size > 0)
+                        {
+                            std::memcpy(dest, pieces[i].data, pieces[i].size);
+                            dest += pieces[i].size;
+                        }
                     }
+                    log(level, buffer, total_length);
                 }
-                log(level, buffer.data(), total_length);
+                else
+                {
+                    // Fallback for unusually large log entries
+                    std::string buffer;
+                    buffer.reserve(total_length);
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        if (pieces[i].size > 0)
+                        {
+                            buffer.append(pieces[i].data, pieces[i].size);
+                        }
+                    }
+                    log(level, buffer.data(), total_length);
+                }
+            } catch (const std::exception& e) {
+                try {
+                    std::cerr << "error occurred while formatting logv entry: " << e.what() << std::endl;
+                } catch (...) {}
+            } catch (...) {
+                try {
+                    std::cerr << "unknown error occurred while formatting logv entry" << std::endl;
+                } catch (...) {}
             }
         }
 
