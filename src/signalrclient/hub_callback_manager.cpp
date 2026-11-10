@@ -22,25 +22,25 @@ namespace signalr
         const std::function<void(const char* err_msg, value&&)>& callback
     )
     {
-        auto invocation_id = std::move(get_invocation_id());
+        auto invocation_id = get_invocation_id();
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
             m_complete_callbacks.insert(std::make_pair(invocation_id, callback));
         }
-        return std::move(invocation_id);
+        return invocation_id;
     }
 
     std::string hub_callback_manager::register_stream_callbacks(
         const std::function<void(value&&)>& stream_item_callback,
         const std::function<void(const char*, value&&)>& complete_callback
     ) {
-        auto callback_id = std::move(get_invocation_id());
+        auto callback_id = get_invocation_id();
         {
             std::lock_guard<std::mutex> lock(m_map_lock);
             m_handle_item_callbacks.insert(std::make_pair(callback_id, stream_item_callback));
             m_complete_callbacks.insert(std::make_pair(callback_id, complete_callback));
         }
-        return std::move(callback_id);
+        return callback_id;
     }
 
     bool hub_callback_manager::handle_stream_item_callback(const std::string& invocation_id, value&& item) const {
@@ -116,6 +116,6 @@ namespace signalr
 
     std::string hub_callback_manager::get_invocation_id()
     {
-        return std::move(std::to_string(m_id++));
+        return std::to_string(m_id++);
     }
 }

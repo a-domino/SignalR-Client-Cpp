@@ -378,7 +378,7 @@ public:
                     if (m_state == session_state::connected) {
                         m_state = session_state::disconnecting;
                         initiate_client_stop = true;
-                        client_to_stop = std::move(m_client);
+                        client_to_stop = m_client;
                     } else if (m_state == session_state::connecting || m_state == session_state::disconnecting) {
                         m_state = session_state::disconnecting;
                         return;

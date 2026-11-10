@@ -35,21 +35,21 @@ namespace signalr
         std::string write_ack_message(const ack_message*) const override;
         std::string write_sequence_message(const sequence_message*) const override;
 
-        std::unique_ptr<hub_protocol::parser_and_handler> create_parser_and_handler(
+        [[nodiscard]] std::unique_ptr<hub_protocol::parser_and_handler> create_parser_and_handler(
             const std::shared_ptr<message_handler>& msg_handler
         ) const override {
             return std::unique_ptr<parser_and_handler>(new parser_and_handler{msg_handler});
         }
 
-        const std::string& name() const override {
+        [[nodiscard]] const std::string& name() const override {
             return m_protocol_name;
         }
 
-        int version() const override {
+        [[nodiscard]] int version() const override {
             return 1;
         }
 
-        signalr::transfer_format transfer_format() const override {
+        [[nodiscard]] signalr::transfer_format transfer_format() const override {
             return signalr::transfer_format::binary;
         }
 

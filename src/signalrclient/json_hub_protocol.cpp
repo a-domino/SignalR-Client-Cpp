@@ -80,7 +80,6 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
             }
         } catch (...) { }
         throw signalr_exception("'type' field enum does not store an integer value: '" + type_str + "'");
-        break;
     }
     case Json::booleanValue:
         msg_type = static_cast<message_type>(type->asBool() ? 1 : 0);
@@ -88,10 +87,8 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
     case Json::arrayValue:
     case Json::objectValue:
         throw signalr_exception("'type' field enum does not store an integer value: " + type->toStyledString());
-        break;
     default:
         throw signalr_exception("Unknown JSON Type for 'type': " + std::to_string(static_cast<int>(type->type())));
-        break;
     }
 
     switch (msg_type) {
@@ -123,9 +120,7 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
         if (invocation_id == nullptr)
         {
             m_message_handler->handle_invocation_message(
-                std::move(
-                    invocation_message("", target->asString(), std::move(args_vector))
-                )
+                invocation_message{"", target->asString(), std::move(args_vector)}
             );
         }
         else
@@ -136,9 +131,7 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
             }
 
             m_message_handler->handle_invocation_message(
-                std::move(
-                    invocation_message(invocation_id->asString(), target->asString(), std::move(args_vector))
-                )
+                invocation_message{invocation_id->asString(), target->asString(), std::move(args_vector)}
             );
         }
         break;
@@ -158,7 +151,7 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
         }
 
         m_message_handler->handle_stream_item_message(
-            std::move(stream_item_message(invocation_id->asString(), createValue(*item)))
+            stream_item_message{invocation_id->asString(), createValue(*item)}
         );
         break;
     }
@@ -183,29 +176,23 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
                                         "The 'error' and 'result' properties are mutually exclusive.");
             }
             m_message_handler->handle_completion_message(
-                std::move(
-                    completion_message(
-                        invocation_id->asString(), error->asString(), signalr::value(),
-                        completion_message::result_kind::error_result
-                    )
+                completion_message(
+                    invocation_id->asString(), error->asString(), signalr::value(),
+                    completion_message::result_kind::error_result
                 )
             );
         } else if (result == nullptr) {
             m_message_handler->handle_completion_message(
-                std::move(
-                    completion_message(
-                        invocation_id->asString(), "", signalr::value(),
-                        completion_message::result_kind::void_result
-                    )
+                completion_message(
+                    invocation_id->asString(), "", signalr::value(),
+                    completion_message::result_kind::void_result
                 )
             );
         } else {
             m_message_handler->handle_completion_message(
-                std::move(
-                    completion_message(
-                        invocation_id->asString(), "", createValue(*result),
-                        completion_message::result_kind::non_void_result
-                    )
+                completion_message(
+                    invocation_id->asString(), "", createValue(*result),
+                    completion_message::result_kind::non_void_result
                 )
             );
         }
@@ -240,9 +227,7 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
         if (invocation_id == nullptr)
         {
             m_message_handler->handle_stream_invocation_message(
-                std::move(
-                    stream_invocation_message("", target->asString(), std::move(args_vector))
-                )
+                stream_invocation_message("", target->asString(), std::move(args_vector))
             );
         }
         else
@@ -255,9 +240,7 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
             }
 
             m_message_handler->handle_stream_invocation_message(
-                std::move(
-                    stream_invocation_message(invocation_id->asString(), target->asString(), std::move(args_vector))
-                )
+                stream_invocation_message(invocation_id->asString(), target->asString(), std::move(args_vector))
             );
         }
 
@@ -272,24 +255,20 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
             throw signalr_exception("Expected 'cancel_invocation' message's 'invocationId' to be of type 'string'");
         }
 
-        m_message_handler->handle_cancel_invocation_message(
-            std::move(cancel_invocation_message(invocation_id->asString()))
-        );
+        m_message_handler->handle_cancel_invocation_message(cancel_invocation_message(invocation_id->asString()));
         break;
     }
     case message_type::ping:
-        m_message_handler->handle_ping_message(std::move(ping_message()));
+        m_message_handler->handle_ping_message(ping_message());
         break;
     case message_type::close: {
         const auto error = root.find("error");
         const auto allow_reconnect = root.find("allowReconnect");
 
         m_message_handler->handle_close_message(
-            std::move(
-                close_message(
-                    error == nullptr || !error->isString() ? "" : error->asString(),
-                    allow_reconnect == nullptr || !allow_reconnect->isBool() ? false : allow_reconnect->asBool()
-                )
+            close_message(
+                error == nullptr || !error->isString() ? "" : error->asString(),
+                allow_reconnect == nullptr || !allow_reconnect->isBool() ? false : allow_reconnect->asBool()
             )
         );
         break;
@@ -312,11 +291,12 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
                 break;
             }
         }
+        /* fall through */
         default:
             throw signalr_exception("Expected 'sequenceId' in 'ack' message to be an Int");
         }
 
-        m_message_handler->handle_ack_message(std::move(ack_message(seq_id)));
+        m_message_handler->handle_ack_message(ack_message(seq_id));
         break;
     }
     case message_type::sequence: {
@@ -337,11 +317,12 @@ void json_hub_protocol::parser_and_handler::parse_and_handle_message(const char*
                 break;
             }
         }
+        /* fall through */
         default:
             throw signalr_exception("Expected 'sequenceId' in 'sequence' message to be an Int");
         }
 
-        m_message_handler->handle_sequence_message(std::move(sequence_message(seq_id)));
+        m_message_handler->handle_sequence_message(sequence_message(seq_id));
         break;
     }
     default:
@@ -423,7 +404,7 @@ std::string json_hub_protocol::write_cancel_invocation_message(
     return Json::writeString(getJsonWriter(), object) + JSON_MSG_SEP;
 }
 
-std::string json_hub_protocol::write_ping_message(const ping_message* ping) const {
+std::string json_hub_protocol::write_ping_message(const ping_message*) const {
     Json::Value object(Json::ValueType::objectValue);
 
     object["type"] = static_cast<int>(message_type::ping);

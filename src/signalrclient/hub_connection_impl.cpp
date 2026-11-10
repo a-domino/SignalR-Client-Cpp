@@ -1271,7 +1271,7 @@ namespace signalr
 
     void hub_connection_impl::stream(
         const std::string& method_name, const std::vector<signalr::value>& arguments,
-        const std::function<void(std::shared_ptr<cancel_stream_interface>)>& stream_invocation_sent_callback,
+        const std::function<void(const std::shared_ptr<cancel_stream_interface>&)>& stream_invocation_sent_callback,
         const std::function<void(signalr::value&&)>& handle_item_callback,
         const std::function<void(value&&, const std::exception_ptr&)>& completion_callback
     ) {
@@ -1310,9 +1310,7 @@ namespace signalr
                         }
                     } else {
                         stream_invocation_sent_callback(
-                            std::move(
-                                std::make_shared<cancel_stream>(weak_hub_connection, invocation_id)
-                            )
+                            std::make_shared<cancel_stream>(weak_hub_connection, invocation_id)
                         );
                     }
                 }

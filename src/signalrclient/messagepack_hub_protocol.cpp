@@ -27,9 +27,11 @@ namespace {
     public:
         std::string str;
 
-        string_wrapper& write(const char* buf, size_t s) override
+        string_wrapper& write(const char* buf, const size_t s) override
         {
-            str.append(buf, s);
+            if (s != 0) {
+                str.append(buf, s);
+            }
             return *this;
         }
     };
@@ -231,7 +233,7 @@ namespace signalr
     }
 
     std::string messagepack_hub_protocol::write_invocation_message(const invocation_message* invocation) const {
-        return std::move(write_invocation_msg<invocation_message>(invocation));
+        return write_invocation_msg<invocation_message>(invocation);
     }
 
     std::string messagepack_hub_protocol::write_stream_item_message(const stream_item_message* stream_item) const {
@@ -297,7 +299,7 @@ namespace signalr
     std::string messagepack_hub_protocol::write_stream_invocation_message(
         const stream_invocation_message* invocation
     ) const {
-        return std::move(write_invocation_msg<stream_invocation_message>(invocation));
+        return write_invocation_msg<stream_invocation_message>(invocation);
     }
 
     std::string messagepack_hub_protocol::write_cancel_invocation_message(
@@ -358,11 +360,11 @@ namespace signalr
     }
 
     std::string messagepack_hub_protocol::write_ack_message(const ack_message* msg) const {
-        return std::move(write_seq_msg<ack_message>(msg));
+        return write_seq_msg<ack_message>(msg);
     }
 
     std::string messagepack_hub_protocol::write_sequence_message(const sequence_message* msg) const {
-        return std::move(write_seq_msg<sequence_message>(msg));
+        return write_seq_msg<sequence_message>(msg);
     }
 
     void messagepack_hub_protocol::parser_and_handler::parse_and_handle_messages(const std::string& message) const
@@ -473,13 +475,11 @@ namespace signalr
 
                 if (type == message_type::invocation) {
                     m_message_handler->handle_invocation_message(
-                        std::move(invocation_message(std::move(invocation_id), std::move(target), std::move(args)))
+                        invocation_message(std::move(invocation_id), std::move(target), std::move(args))
                     );
                 } else {
                     m_message_handler->handle_stream_invocation_message(
-                        std::move(
-                            stream_invocation_message(std::move(invocation_id), std::move(target), std::move(args))
-                        )
+                        stream_invocation_message(std::move(invocation_id), std::move(target), std::move(args))
                     );
                 }
 
@@ -539,16 +539,12 @@ namespace signalr
                 }
 
                 m_message_handler->handle_completion_message(
-                    std::move(
-                        completion_message(
-                            std::move(invocation_id), std::move(error), std::move(result), result_kind
-                        )
-                    )
+                    completion_message(std::move(invocation_id), std::move(error), std::move(result), result_kind)
                 );
                 break;
             }
             case message_type::ping:
-                m_message_handler->handle_ping_message(std::move(ping_message()));
+                m_message_handler->handle_ping_message(ping_message());
                 break;
             case message_type::stream_item: {
                 // StreamItem messages have the following structure:
@@ -572,7 +568,7 @@ namespace signalr
                 signalr::value item = createValue(*msgpack_obj_index);
 
                 m_message_handler->handle_stream_item_message(
-                    std::move(stream_item_message(std::move(invocation_id), std::move(item)))
+                    stream_item_message(std::move(invocation_id), std::move(item))
                 );
                 break;
             }
@@ -594,7 +590,7 @@ namespace signalr
                 std::string invocation_id(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
 
                 m_message_handler->handle_cancel_invocation_message(
-                    std::move(cancel_invocation_message(std::move(invocation_id)))
+                    cancel_invocation_message(std::move(invocation_id))
                 );
                 break;
             }
@@ -609,7 +605,7 @@ namespace signalr
                 std::string error;
                 if (msgpack_obj_index->type == msgpack::type::STR)
                 {
-                    error = std::move(std::string(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size));
+                    error = std::string(msgpack_obj_index->via.str.ptr, msgpack_obj_index->via.str.size);
                 }
 
                 bool allow_reconnect = false;
@@ -648,17 +644,14 @@ namespace signalr
                         throw signalr_exception(
                             "reading a close message's 'allow_reconnect' field as an array is not allowed"
                         );
-                        break;
                     case msgpack::type::MAP:
                         throw signalr_exception(
                             "reading a close message's 'allow_reconnect' field as a map is not allowed"
                         );
-                        break;
                     case msgpack::type::EXT:
                         throw signalr_exception(
                             "reading a close message's 'allow_reconnect' field as EXT is not allowed"
                         );
-                        break;
                     default:
                         throw signalr_exception(
                             "encountered unknown type while reading a close message's 'allow_reconnect' field: " +
@@ -667,9 +660,7 @@ namespace signalr
                     }
                 }
 
-                m_message_handler->handle_close_message(
-                    std::move(close_message(std::move(error), allow_reconnect))
-                );
+                m_message_handler->handle_close_message(close_message(std::move(error), allow_reconnect));
                 break;
             }
             case message_type::ack: {
@@ -706,16 +697,12 @@ namespace signalr
                     break;
                 case msgpack::type::BIN:
                     throw signalr_exception("Can't parse ack message's SequenceId str from binary");
-                    break;
                 case msgpack::type::ARRAY:
                     throw signalr_exception("Can't convert ack message's SequenceId str from an array");
-                    break;
                 case msgpack::type::MAP:
                     throw signalr_exception("Can't convert ack message's SequenceId str from a map");
-                    break;
                 case msgpack::type::EXT:
                     throw signalr_exception("Can't convert ack message's SequenceId str from EXT type");
-                    break;
                 default:
                     throw signalr_exception(
                         "encountered unknown type while reading an ack message's 'SequenceId' field: " +
@@ -723,7 +710,7 @@ namespace signalr
                     );
                 }
 
-                m_message_handler->handle_ack_message(std::move(ack_message(sequence_id)));
+                m_message_handler->handle_ack_message(ack_message(sequence_id));
                 break;
             }
             case message_type::sequence: {
@@ -760,23 +747,19 @@ namespace signalr
                     break;
                 case msgpack::type::BIN:
                     throw signalr_exception("Can't parse sequence message's SequenceId from binary");
-                    break;
                 case msgpack::type::ARRAY:
                     throw signalr_exception("Can't convert sequence message's SequenceId from an array");
-                    break;
                 case msgpack::type::MAP:
                     throw signalr_exception("Can't convert sequence message's SequenceId from a map");
-                    break;
                 case msgpack::type::EXT:
                     throw signalr_exception("Can't convert sequence message's SequenceId from EXT type");
-                    break;
                 default:
                     throw signalr_exception(
                         "encountered unknown type while reading a sequency message's 'SequenceId' field: " +
                         std::to_string(msgpack_obj_index->type)
                     );
                 }
-                m_message_handler->handle_sequence_message(std::move(sequence_message(sequence_id)));
+                m_message_handler->handle_sequence_message(sequence_message(sequence_id));
                 break;
             }
             default:

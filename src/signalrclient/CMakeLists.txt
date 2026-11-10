@@ -13,10 +13,12 @@ set (SOURCES
   signalr_value.cpp
   stdafx.cpp
   trace_log_writer.cpp
-        transport_factory.cpp
+  transport_factory.cpp
   url_builder.cpp
   websocket_transport.cpp
   signalr_default_scheduler.cpp
+  ../../third_party_code/cpprestsdk/uri.cpp
+  ../../third_party_code/cpprestsdk/uri_builder.cpp
 )
 
 if(USE_MSGPACK)

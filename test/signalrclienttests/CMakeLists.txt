@@ -19,8 +19,8 @@ set (SOURCES
   url_builder_tests.cpp
   websocket_transport_tests.cpp
   signalr_default_scheduler_tests.cpp
-        uri_tests.cpp
-        json_helpers_tests.cpp
+  uri_tests.cpp
+  json_helpers_tests.cpp
 )
 
 if(USE_MSGPACK)

@@ -25,7 +25,7 @@ namespace signalr {
         if (!toAppend.empty() && toAppend != oneSlash) {
             auto& thisPath = m_uri.m_path;
             if (&thisPath == &toAppend) {
-                const std::string appendCopy = toAppend;
+                const std::string& appendCopy = toAppend;
                 return append_path(appendCopy, do_encode);
             }
 
@@ -54,7 +54,7 @@ namespace signalr {
         if (!toAppend.empty()) {
             auto& thisPath = m_uri.m_path;
             if (&thisPath == &toAppend) {
-                const std::string appendCopy = toAppend;
+                const std::string& appendCopy = toAppend;
                 return append_path_raw(appendCopy, do_encode);
             }
 
@@ -85,7 +85,7 @@ namespace signalr {
 
             auto& thisQuery = m_uri.m_query;
             if (&thisQuery == &toAppend) {
-                const std::string appendCopy = query_to_add;
+                const std::string& appendCopy = query_to_add;
                 return append_query(appendCopy, do_encode);
             }
 

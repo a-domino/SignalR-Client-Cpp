@@ -3240,8 +3240,8 @@ namespace {
             m_cv.notify_all();
         }
 
-        void complete_stop() {
-            auto callback = m_stop;
+        void complete_stop() const {
+            const auto callback = m_stop;
             if (callback) {
                 callback(nullptr);
             }
@@ -3983,3 +3983,113 @@ TEST(websocket_transport_round10, DISABLED_stop_before_first_registration_return
 }
 
 } // namespace websocket_transport_round10
+
+namespace websocket_transport_lifetime {
+
+using stop_completion = std::function<void(const std::exception_ptr&)>;
+using receive_completion = std::function<void(std::string&&, const std::exception_ptr&)>;
+
+namespace {
+    struct deferred_stop_observation {
+        int client_destructions{0};
+        int stop_calls{0};
+        stop_completion pending_stop_completion;
+    };
+
+    class deferred_stop_lifetime_client final : public signalr::websocket_client {
+    public:
+        explicit deferred_stop_lifetime_client(std::shared_ptr<deferred_stop_observation> observation)
+            : m_observation(std::move(observation)) {}
+
+        ~deferred_stop_lifetime_client() override {
+            ++m_observation->client_destructions;
+        }
+
+        void start(const std::string&, const stop_completion& callback) override {
+            callback(nullptr);
+        }
+
+        void stop(const stop_completion& callback) override {
+            ++m_observation->stop_calls;
+
+            // Quiesce the outstanding read, as the websocket_client contract requires.
+            auto pending_receive = std::move(m_pending_receive);
+            if (pending_receive) {
+                pending_receive(std::string(), nullptr);
+            }
+
+            // The close is still pending. The TEST owns this state; it does not own the client.
+            m_observation->pending_stop_completion = callback;
+        }
+
+        void send(
+            const std::string&,
+            signalr::transfer_format,
+            const std::function<void(std::exception_ptr)>& callback
+        ) override {
+            callback(nullptr);
+        }
+
+        void receive(const receive_completion& callback) override {
+            m_pending_receive = callback;
+        }
+
+    private:
+        std::shared_ptr<deferred_stop_observation> m_observation;
+        receive_completion m_pending_receive;
+    };
+}
+
+TEST(websocket_transport_lifetime, client_remains_alive_until_deferred_stop_completion) {
+    auto observation = std::make_shared<deferred_stop_observation>();
+    std::weak_ptr<signalr::websocket_client> client_weak;
+
+    // Important: do NOT keep an owning client shared_ptr in the test or factory capture.
+    // The transport must retain the client on its own until the stop completion arrives.
+    auto transport = signalr::websocket_transport::create(
+        [&observation, &client_weak](
+            const signalr::signalr_client_config&
+        ) -> std::shared_ptr<signalr::websocket_client> {
+            auto client = std::make_shared<deferred_stop_lifetime_client>(observation);
+            client_weak = client;
+            return client;
+        },
+        signalr::signalr_client_config{},
+        signalr::logger(std::make_shared<signalr::trace_log_writer>(), signalr::trace_level::none)
+    );
+
+    int start_completions = 0;
+    transport->start("ws://example.test", [&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++start_completions;
+    });
+    ASSERT_EQ(1, start_completions);
+    ASSERT_FALSE(client_weak.expired());
+
+    int stop_completions = 0;
+    transport->stop([&](const std::exception_ptr& error) {
+        EXPECT_EQ(nullptr, error);
+        ++stop_completions;
+    });
+
+    ASSERT_EQ(1, observation->stop_calls);
+    ASSERT_TRUE(static_cast<bool>(observation->pending_stop_completion));
+    EXPECT_EQ(0, stop_completions);
+
+    // REGRESSION ASSERTIONS: both fail on websocket_transport(9).cpp.
+    // stop() returns with the local client_to_stop destroyed, but its callback is still pending.
+    EXPECT_EQ(0, observation->client_destructions);
+    EXPECT_FALSE(client_weak.expired());
+
+    // Finish the deferred close without touching a potentially destroyed mock object.
+    auto complete_stop = std::move(observation->pending_stop_completion);
+    observation->pending_stop_completion = nullptr;
+    complete_stop(nullptr);
+    complete_stop = nullptr;
+
+    EXPECT_EQ(1, stop_completions);
+    EXPECT_EQ(1, observation->client_destructions);
+    EXPECT_TRUE(client_weak.expired());
+}
+
+} // namespace websocket_transport_lifetime

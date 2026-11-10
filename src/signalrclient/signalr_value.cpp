@@ -215,6 +215,10 @@ namespace signalr
 
     value& value::operator=(const value& rhs)
     {
+        if (this == &rhs) {
+            return *this;
+        }
+
         destruct_internals();
 
         switch (rhs.mType)
@@ -248,6 +252,10 @@ namespace signalr
 
     value& value::operator=(value&& rhs) noexcept
     {
+        if (this == &rhs) {
+            return *this;
+        }
+
         destruct_internals();
 
         switch (rhs.mType)
@@ -348,7 +356,7 @@ namespace signalr
     {
         if (!is_array())
         {
-            throw signalr_exception("object is a '" + value_type_to_string(mType) + "' expected it to be a 'array'");
+            throw signalr_exception("object is a '" + value_type_to_string(mType) + "' expected it to be an 'array'");
         }
 
         return mStorage.array;
@@ -415,7 +423,7 @@ namespace signalr
             }
         case signalr::value_type::binary:
             {
-                displayVector(os, value.as_binary());
+                displayVector<uint8_t, int>(os, value.as_binary());
                 break;
             }
         default:
