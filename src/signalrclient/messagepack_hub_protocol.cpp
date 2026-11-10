@@ -126,6 +126,12 @@ static void pack_signalr_value(const signalr::value& v, msgpack::packer<string_w
         packer.pack_bin_body(reinterpret_cast<const char*>(bin.data()), static_cast<uint32_t>(bin.size()));
         return;
     }
+    case signalr::value_type::ext: {
+        const auto& ext = v.as_ext();
+        packer.pack_ext(ext.data.size(), ext.type_code);
+        packer.pack_ext_body(reinterpret_cast<const char*>(ext.data.data()), static_cast<uint32_t>(ext.data.size()));
+        return;
+    }
     case signalr::value_type::null:
     default:
         packer.pack_nil();
@@ -224,8 +230,9 @@ namespace signalr
             std::vector<uint8_t> vec = std::vector<uint8_t>(v.via.bin.ptr, v.via.bin.ptr + v.via.bin.size);
             return {std::move(vec)};
         }
-        case msgpack::type::object_type::EXT:
-            throw signalr_exception("messagepack type 'EXT' not supported");
+        case msgpack::type::object_type::EXT: {
+            return {v.via.ext};
+        }
         case msgpack::type::object_type::NIL:
         default:
             return {};

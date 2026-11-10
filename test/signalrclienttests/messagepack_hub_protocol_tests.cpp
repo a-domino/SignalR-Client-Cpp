@@ -5,8 +5,13 @@
 #include "stdafx.h"
 
 #ifdef USE_MSGPACK
+
+#include <msgpack.hpp>
+
+#include "binary_message_formatter.h"
 #include "messagepack_hub_protocol.h"
 #include "test_utils.h"
+#include "signalrclient/signalr_exception.h"
 
 using namespace signalr;
 
@@ -454,6 +459,364 @@ TEST(messagepack_hub_protocol, invalid_messages_throw)
             ASSERT_STREQ(pair.second.c_str(), exception.what()) << "Test invalid messagepack message: " << i << std::endl;
         }
     }
+}
+
+TEST(messagepack_hub_protocol_ext, parse_invocation_message_with_ext_argument)
+{
+    // Frame: [1 (invocation), Headers {}, "inv123", "TargetMethod", [EXT(10, {0x01, 0x02, 0x03, 0x04})]]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(5);
+    packer.pack_int(1); // invocation
+    packer.pack_map(0); // headers
+    packer.pack_str(6);
+    packer.pack_str_body("inv123", 6);
+    packer.pack_str(12);
+    packer.pack_str_body("TargetMethod", 12);
+
+    packer.pack_array(1);
+    constexpr int8_t type_code = 10;
+    constexpr char ext_payload[] = {0x01, 0x02, 0x03, 0x04};
+    packer.pack_ext(sizeof(ext_payload), type_code);
+    packer.pack_ext_body(ext_payload, sizeof(ext_payload));
+
+    std::string payload(sbuf.data(), sbuf.size());
+    // Prefix with binary message 0x1E varint length
+    binary_message_formatter::write_length_prefix(payload);
+    const std::string wire_message = std::move(payload);
+
+    const auto handler = std::make_shared<test_message_handler>();
+    const auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    parser->parse_and_handle_messages(wire_message);
+
+    ASSERT_EQ(1U, handler->invocation_messages.size());
+    const auto& msg = handler->invocation_messages[0];
+    ASSERT_EQ("inv123", msg.invocation_id);
+    ASSERT_EQ("TargetMethod", msg.target);
+    ASSERT_EQ(1U, msg.arguments.size());
+    ASSERT_TRUE(msg.arguments[0].is_ext());
+
+    const auto& ext = msg.arguments[0].as_ext();
+    ASSERT_EQ(10, ext.type_code);
+    ASSERT_EQ((std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04}), ext.data);
+}
+
+TEST(messagepack_hub_protocol_ext, parse_stream_item_message_with_ext_item)
+{
+    // Frame: [2 (stream_item), Headers {}, "streamId", EXT(-1, {0x11, 0x22})]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(4);
+    packer.pack_int(2); // stream_item
+    packer.pack_map(0); // headers
+    packer.pack_str(8);
+    packer.pack_str_body("streamId", 8);
+
+    constexpr int8_t type_code = -1; // Standard MessagePack Timestamp type code
+    constexpr char ext_payload[] = {0x11, 0x22};
+    packer.pack_ext(sizeof(ext_payload), type_code);
+    packer.pack_ext_body(ext_payload, sizeof(ext_payload));
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    auto handler = std::make_shared<test_message_handler>();
+    const auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    parser->parse_and_handle_messages(payload);
+
+    ASSERT_EQ(1U, handler->stream_item_messages.size());
+    const auto& msg = handler->stream_item_messages[0];
+    ASSERT_EQ("streamId", msg.invocation_id);
+    ASSERT_TRUE(msg.item.is_ext());
+    ASSERT_EQ(-1, msg.item.as_ext().type_code);
+    ASSERT_EQ((std::vector<uint8_t>{0x11, 0x22}), msg.item.as_ext().data);
+}
+
+TEST(messagepack_hub_protocol_ext, parse_completion_message_with_ext_result)
+{
+    // Frame: [3 (completion), Headers {}, "inv456", 1 (non_void_result), EXT(5, {0xAA, 0xBB})]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(5);
+    packer.pack_int(3); // completion
+    packer.pack_map(0); // headers
+    packer.pack_str(6);
+    packer.pack_str_body("inv456", 6);
+    packer.pack_int(static_cast<int>(completion_message::result_kind::non_void_result));
+
+    constexpr int8_t type_code = 5;
+    constexpr char ext_payload[] = {static_cast<char>(0xAA), static_cast<char>(0xBB)};
+    packer.pack_ext(sizeof(ext_payload), type_code);
+    packer.pack_ext_body(ext_payload, sizeof(ext_payload));
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    const auto handler = std::make_shared<test_message_handler>();
+    const auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    parser->parse_and_handle_messages(payload);
+
+    ASSERT_EQ(1U, handler->completion_messages.size());
+    const auto& msg = handler->completion_messages[0];
+    ASSERT_EQ("inv456", msg.invocation_id);
+    ASSERT_TRUE(msg.result.is_ext());
+    ASSERT_EQ(5, msg.result.as_ext().type_code);
+    ASSERT_EQ((std::vector<uint8_t>{0xAA, 0xBB}), msg.result.as_ext().data);
+}
+
+TEST(messagepack_hub_protocol_ext, write_invocation_message_with_ext_argument_roundtrips)
+{
+    messagepack_hub_protocol protocol;
+    constexpr int8_t type_code = 12;
+    std::vector<uint8_t> ext_data{0x10, 0x20, 0x30, 0x40, 0x50};
+    value ext_value(type_code, ext_data);
+
+    invocation_message original_msg("req1", "ProcessExt", std::vector<value>{ext_value});
+    auto wire_bytes = protocol.write_invocation_message(&original_msg);
+
+    auto handler = std::make_shared<test_message_handler>();
+    const auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    parser->parse_and_handle_messages(wire_bytes);
+
+    ASSERT_EQ(1U, handler->invocation_messages.size());
+    const auto& parsed_msg = handler->invocation_messages[0];
+    ASSERT_EQ("req1", parsed_msg.invocation_id);
+    ASSERT_EQ("ProcessExt", parsed_msg.target);
+    ASSERT_EQ(1U, parsed_msg.arguments.size());
+    ASSERT_TRUE(parsed_msg.arguments[0].is_ext());
+    ASSERT_EQ(type_code, parsed_msg.arguments[0].as_ext().type_code);
+    ASSERT_EQ(ext_data, parsed_msg.arguments[0].as_ext().data);
+}
+
+TEST(messagepack_hub_protocol_ext, ext_in_close_message_allow_reconnect_throws)
+{
+    // [7 (close), "error", EXT(0, {})]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(3);
+    packer.pack_int(7);
+    packer.pack_str(5);
+    packer.pack_str_body("error", 5);
+    packer.pack_ext(0, 0);
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    auto handler = std::make_shared<test_message_handler>();
+    const auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    ASSERT_THROW(parser->parse_and_handle_messages(payload), signalr::signalr_exception);
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, roundtrip_zero_length_ext_payload)
+{
+    messagepack_hub_protocol protocol;
+    value ext_val(7, std::vector<uint8_t>{});
+
+    invocation_message msg("inv0", "EmptyExtTarget", std::vector<value>{ext_val});
+    auto wire_bytes = protocol.write_invocation_message(&msg);
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+    parser->parse_and_handle_messages(wire_bytes);
+
+    ASSERT_EQ(1U, handler->invocation_messages.size());
+    const auto& parsed = handler->invocation_messages[0];
+    ASSERT_TRUE(parsed.arguments[0].is_ext());
+    ASSERT_EQ(7, parsed.arguments[0].as_ext().type_code);
+    ASSERT_TRUE(parsed.arguments[0].as_ext().data.empty());
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, parse_all_msgpack_fixext_sizes)
+{
+    // Tests fixext 1 (0xd4), fixext 2 (0xd5), fixext 4 (0xd6), fixext 8 (0xd7), fixext 16 (0xd8)
+    const std::vector<size_t> fixext_sizes = {1, 2, 4, 8, 16};
+
+    for (size_t sz : fixext_sizes)
+    {
+        msgpack::sbuffer sbuf;
+        msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+        packer.pack_array(5);
+        packer.pack_int(1); // invocation
+        packer.pack_map(0); // headers
+        packer.pack_str(4);
+        packer.pack_str_body("test", 4);
+        packer.pack_str(6);
+        packer.pack_str_body("Target", 6);
+
+        packer.pack_array(1);
+        std::vector<uint8_t> payload(sz, static_cast<uint8_t>(sz));
+        packer.pack_ext(sz, static_cast<int8_t>(sz));
+        packer.pack_ext_body(reinterpret_cast<const char*>(payload.data()), sz);
+
+        std::string wire_message(sbuf.data(), sbuf.size());
+        binary_message_formatter::write_length_prefix(wire_message);
+
+        auto handler = std::make_shared<test_message_handler>();
+        auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+        parser->parse_and_handle_messages(wire_message);
+
+        ASSERT_EQ(1U, handler->invocation_messages.size());
+        const auto& arg = handler->invocation_messages[0].arguments[0];
+        ASSERT_TRUE(arg.is_ext());
+        ASSERT_EQ(static_cast<int8_t>(sz), arg.as_ext().type_code);
+        ASSERT_EQ(payload, arg.as_ext().data);
+    }
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, roundtrip_large_ext_16_payload)
+{
+    messagepack_hub_protocol protocol;
+    // 300 bytes forces the 'ext 16' (0xc8) variable format (> 255 bytes)
+    std::vector<uint8_t> large_data(300);
+    for (size_t i = 0; i < large_data.size(); ++i)
+    {
+        large_data[i] = static_cast<uint8_t>(i % 256);
+    }
+
+    value ext_val(42, large_data);
+    invocation_message original_msg("large_inv", "HandleLargeExt", std::vector<value>{ext_val});
+    auto wire_bytes = protocol.write_invocation_message(&original_msg);
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+    parser->parse_and_handle_messages(wire_bytes);
+
+    ASSERT_EQ(1U, handler->invocation_messages.size());
+    const auto& parsed = handler->invocation_messages[0];
+    ASSERT_TRUE(parsed.arguments[0].is_ext());
+    ASSERT_EQ(42, parsed.arguments[0].as_ext().type_code);
+    ASSERT_EQ(large_data, parsed.arguments[0].as_ext().data);
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, parse_ext_nested_in_array_and_map)
+{
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(5);
+    packer.pack_int(1); // invocation
+    packer.pack_map(0); // headers
+    packer.pack_str(4);
+    packer.pack_str_body("nest", 4);
+    packer.pack_str(6);
+    packer.pack_str_body("Target", 6);
+
+    // Arguments: [ [EXT(1, {0x11})], {"map_key": EXT(2, {0x22})} ]
+    packer.pack_array(2);
+
+    // Nested array
+    packer.pack_array(1);
+    constexpr char ext1_body[] = {0x11};
+    packer.pack_ext(sizeof(ext1_body), 1);
+    packer.pack_ext_body(ext1_body, sizeof(ext1_body));
+
+    // Nested map
+    packer.pack_map(1);
+    packer.pack_str(7);
+    packer.pack_str_body("map_key", 7);
+    constexpr char ext2_body[] = {0x22};
+    packer.pack_ext(sizeof(ext2_body), 2);
+    packer.pack_ext_body(ext2_body, sizeof(ext2_body));
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+    parser->parse_and_handle_messages(payload);
+
+    ASSERT_EQ(1U, handler->invocation_messages.size());
+    const auto& args = handler->invocation_messages[0].arguments;
+    ASSERT_EQ(2U, args.size());
+
+    // Verify nested array
+    ASSERT_TRUE(args[0].is_array());
+    ASSERT_EQ(1U, args[0].as_array().size());
+    ASSERT_TRUE(args[0].as_array()[0].is_ext());
+    ASSERT_EQ(1, args[0].as_array()[0].as_ext().type_code);
+    ASSERT_EQ((std::vector<uint8_t>{0x11}), args[0].as_array()[0].as_ext().data);
+
+    // Verify nested map
+    ASSERT_TRUE(args[1].is_map());
+    const auto& map = args[1].as_map();
+    ASSERT_EQ(1U, map.count("map_key"));
+    ASSERT_TRUE(map.at("map_key").is_ext());
+    ASSERT_EQ(2, map.at("map_key").as_ext().type_code);
+    ASSERT_EQ((std::vector<uint8_t>{0x22}), map.at("map_key").as_ext().data);
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, truncated_ext_body_throws_exception)
+{
+    // Handcraft a message claiming a 4-byte fixext (0xd6), but providing only 2 bytes
+    auto truncated = string_from_bytes({
+        0x0D, // Length prefix
+        0x95, 0x01, 0x80, 0xA1, 0x31, 0xA1, 0x54, 0x91,
+        0xD6, 0x05, 0xAA, 0xBB // 0xD6 is fixext 4 (requires type_code + 4 data bytes), only 2 data bytes provided
+    });
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    ASSERT_THROW(parser->parse_and_handle_messages(truncated), signalr_exception);
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, ext_in_invocation_id_throws_exception)
+{
+    // [1 (invocation), Headers {}, EXT(0, {0x01}) (invalid invocationId), "target", []]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(5);
+    packer.pack_int(1);
+    packer.pack_map(0);
+    packer.pack_ext(1, 0);
+    constexpr char b = 0x01;
+    packer.pack_ext_body(&b, 1);
+    packer.pack_str(6);
+    packer.pack_str_body("target", 6);
+    packer.pack_array(0);
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    ASSERT_THROW(parser->parse_and_handle_messages(payload), signalr_exception);
+}
+
+TEST(messagepack_hub_protocol_ext_edge_cases, ext_in_completion_result_kind_throws_exception)
+{
+    // [3 (completion), Headers {}, "inv1", EXT(0, {0x01}) (invalid result_kind)]
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> packer(sbuf);
+
+    packer.pack_array(4);
+    packer.pack_int(3);
+    packer.pack_map(0);
+    packer.pack_str(4);
+    packer.pack_str_body("inv1", 4);
+    packer.pack_ext(1, 0);
+    constexpr char b = 0x01;
+    packer.pack_ext_body(&b, 1);
+
+    std::string payload(sbuf.data(), sbuf.size());
+    binary_message_formatter::write_length_prefix(payload);
+
+    auto handler = std::make_shared<test_message_handler>();
+    auto parser = messagepack_hub_protocol().create_parser_and_handler(handler);
+
+    ASSERT_THROW(parser->parse_and_handle_messages(payload), signalr_exception);
 }
 
 #endif

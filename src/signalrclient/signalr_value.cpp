@@ -9,6 +9,10 @@
 #include <iostream>
 #include <string>
 
+#ifdef USE_MSGPACK
+#include <msgpack/v1/object_fwd.hpp>
+#endif // USE_MSGPACK
+
 namespace signalr
 {
     static std::string value_type_to_string(value_type v)
@@ -29,6 +33,8 @@ namespace signalr
             return "boolean";
         case signalr::value_type::binary:
             return "binary";
+        case signalr::value_type::ext:
+            return "ext";
         default:
             return std::to_string(static_cast<int>(v));
         }
@@ -59,6 +65,9 @@ namespace signalr
             break;
         case value_type::binary:
             new (&mStorage.binary) std::vector<uint8_t>();
+            break;
+        case value_type::ext:
+            new (&mStorage.ext) messagepack_ext(0, std::vector<uint8_t>());
             break;
         case value_type::null:
         default:
@@ -126,6 +135,29 @@ namespace signalr
         new (&mStorage.binary) std::vector<uint8_t>(std::move(bin));
     }
 
+#ifdef USE_MSGPACK
+
+    value::value(const msgpack::object_ext& ext_obj) : mType(value_type::ext) {
+        const auto* const ext_obj_data = reinterpret_cast<const uint8_t*>(ext_obj.data());
+        if (ext_obj.size == 0 || ext_obj_data == nullptr) {
+            new (&mStorage.ext) messagepack_ext(ext_obj.type(), std::vector<uint8_t>());
+        } else {
+            new (&mStorage.ext) messagepack_ext(
+                ext_obj.type(), std::vector<uint8_t>{ext_obj_data, ext_obj_data + ext_obj.size}
+            );
+        }
+    }
+
+#endif // USE_MSGPACK
+
+    value::value(const int8_t type_code, const std::vector<uint8_t>& data) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(type_code, std::vector<uint8_t>(data));
+    }
+
+    value::value(const int8_t type_code, std::vector<uint8_t>&& data) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(type_code, std::move(data));
+    }
+
     value::value(const value& rhs)
     {
         switch (rhs.mType)
@@ -147,6 +179,9 @@ namespace signalr
             break;
         case value_type::binary:
             new (&mStorage.binary) std::vector<uint8_t>(rhs.mStorage.binary);
+            break;
+        case value_type::ext:
+            new (&mStorage.ext) messagepack_ext(rhs.mStorage.ext);
             break;
         case value_type::null:
         default:
@@ -177,6 +212,9 @@ namespace signalr
         case value_type::binary:
             new (&mStorage.binary) std::vector<uint8_t>(std::move(rhs.mStorage.binary));
             break;
+        case value_type::ext:
+            new (&mStorage.ext) messagepack_ext(std::move(rhs.mStorage.ext));
+            break;
         case value_type::null:
         default:
             break;
@@ -204,6 +242,9 @@ namespace signalr
             break;
         case value_type::binary:
             mStorage.binary.~vector();
+            break;
+        case value_type::ext:
+            mStorage.ext.~messagepack_ext();
             break;
         case value_type::null:
         case value_type::float64:
@@ -241,6 +282,9 @@ namespace signalr
         case value_type::binary:
             new (&mStorage.binary) std::vector<uint8_t>(rhs.mStorage.binary);
             break;
+        case value_type::ext:
+            new (&mStorage.ext) messagepack_ext(rhs.mStorage.ext);
+            break;
         case value_type::null:
         default:
             break;
@@ -277,6 +321,9 @@ namespace signalr
             break;
         case value_type::binary:
             new (&mStorage.binary) std::vector<uint8_t>(std::move(rhs.mStorage.binary));
+            break;
+        case value_type::ext:
+            new (&mStorage.ext) messagepack_ext(std::move(rhs.mStorage.ext));
             break;
         case value_type::null:
         default:
@@ -320,6 +367,10 @@ namespace signalr
     bool value::is_binary() const
     {
         return mType == signalr::value_type::binary;
+    }
+
+    bool value::is_ext() const {
+        return mType == signalr::value_type::ext;
     }
 
     double value::as_double() const
@@ -382,6 +433,15 @@ namespace signalr
         return mStorage.binary;
     }
 
+    const messagepack_ext& value::as_ext() const {
+        if (!is_ext())
+        {
+            throw signalr_exception("object is a '" + value_type_to_string(mType) + "' expected it to be an 'ext'");
+        }
+
+        return mStorage.ext;
+    }
+
     value_type value::type() const
     {
         return mType;
@@ -426,6 +486,13 @@ namespace signalr
                 displayVector<uint8_t, int>(os, value.as_binary());
                 break;
             }
+        case signalr::value_type::ext: {
+            const auto& ext_value = value.as_ext();
+            os << "{type_code: " << static_cast<int>(ext_value.type_code) << ", ";
+            displayVector<uint8_t, int>(os, ext_value.data);
+            os << "}";
+        }
+        break;
         default:
             {
                 os << "UNKNOWN - signalr::value_type::unknown<" << static_cast<int>(value_type) << ">";

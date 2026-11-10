@@ -11,6 +11,7 @@ set (SOURCES
   logger_tests.cpp
   memory_log_writer.cpp
   negotiate_tests.cpp
+  signalr_value_tests.cpp
   signalrclienttests.cpp
   stdafx.cpp
   test_http_client.cpp

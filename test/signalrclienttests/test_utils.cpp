@@ -142,6 +142,16 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
         }
         break;
     }
+    case value_type::ext: {
+        const auto& expected_ext = expected.as_ext();
+        const auto& actual_ext = actual.as_ext();
+        ASSERT_EQ(expected_ext.type_code, actual_ext.type_code);
+        ASSERT_EQ(expected_ext.data.size(), actual_ext.data.size());
+        for (size_t i(0); i < expected_ext.data.size(); ++i) {
+            ASSERT_EQ(expected_ext.data[i], actual_ext.data[i]);
+        }
+        break;
+    }
     case value_type::null:
         break;
     default:

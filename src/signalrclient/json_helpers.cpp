@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "signalrclient/signalr_exception.h"
+
 namespace signalr {
     signalr::value createValue(const Json::Value& v) {
         switch (v.type()) {
@@ -121,6 +123,9 @@ namespace signalr {
         case signalr::value_type::binary: {
             const auto& binary = v.as_binary();
             return {base64Encode(binary)};
+        }
+        case signalr::value_type::ext: {
+            throw signalr_exception("MessagePack EXT data object not support for JSON");
         }
         case signalr::value_type::null:
         default:

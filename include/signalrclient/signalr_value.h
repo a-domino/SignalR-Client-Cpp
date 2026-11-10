@@ -9,7 +9,10 @@
 #include <vector>
 #include <map>
 #include <cstddef>
-#include <cstdint>
+
+#ifdef USE_MSGPACK
+#include <msgpack/v3/object_fwd_decl.hpp>
+#endif
 
 namespace signalr
 {
@@ -24,7 +27,33 @@ namespace signalr
         float64,
         null,
         boolean,
-        binary
+        binary,
+        ext
+    };
+
+    /**
+     * Represents a MessagePack Extension (EXT) object, consisting of an extension type code
+     * and a payload of binary data.
+     */
+    struct messagepack_ext {
+        int8_t type_code{0};
+        std::vector<uint8_t> data;
+
+        /**
+         * Create an EXT object by moving the given binary payload.
+         *
+         * @param type_code Application- or format-defined extension type identifier (-128 to 127).
+         * @param data Binary payload to take ownership of.
+         */
+        messagepack_ext(const int8_t type_code, std::vector<uint8_t>&& data)
+            : type_code(type_code), data(std::move(data)) {}
+
+        messagepack_ext(const messagepack_ext& other)
+            : type_code(other.type_code), data(std::vector<uint8_t>(other.data)) {}
+
+        messagepack_ext(messagepack_ext&& other) noexcept : type_code(other.type_code), data(std::move(other.data)) {}
+
+        ~messagepack_ext() = default;
     };
 
     /**
@@ -108,6 +137,25 @@ namespace signalr
          */
         SIGNALRCLIENT_API value(std::vector<uint8_t>&& bin);
 
+#ifdef USE_MSGPACK
+
+        /**
+         * Creates an object representing a value_type::ext from the given MessagePack ext.
+         */
+        SIGNALRCLIENT_API value(const msgpack::object_ext& ext_obj);
+
+#endif // USE_MSGPACK
+
+        /**
+         * Creates an object representing a value_type::ext from the given type code and data.
+         */
+        SIGNALRCLIENT_API value(int8_t type_code, const std::vector<uint8_t>& data);
+
+        /**
+         * Creates an object representing a value_type::ext with the given type code and data.
+         */
+        SIGNALRCLIENT_API value(int8_t type_code, std::vector<uint8_t>&& data);
+
         /**
          * Copies an existing value.
          */
@@ -169,6 +217,11 @@ namespace signalr
         SIGNALRCLIENT_API bool is_binary() const;
 
         /**
+         * True if the object stored is a representation of a MessagePack EXT object.
+         */
+        SIGNALRCLIENT_API bool is_ext() const;
+
+        /**
          * Returns the stored object as a double. This will throw if the underlying object is not a signalr::type::float64.
          */
         SIGNALRCLIENT_API double as_double() const;
@@ -199,6 +252,12 @@ namespace signalr
         SIGNALRCLIENT_API const std::vector<uint8_t>& as_binary() const;
 
         /**
+         * Returns the stored object as a representation of the MessagePack's EXT object. This will throw if the
+         * underlying object is not a signalr::type::ext.
+         */
+        SIGNALRCLIENT_API const messagepack_ext& as_ext() const;
+
+        /**
          * Returns the signalr::type that represents the stored object.
          */
         SIGNALRCLIENT_API value_type type() const;
@@ -210,12 +269,13 @@ namespace signalr
         {
 #pragma warning (push)
 #pragma warning (disable: 4582)
-            bool boolean;
+            bool boolean{};
             std::string string;
             std::vector<value> array;
             double number;
             std::map<std::string, value> map;
             std::vector<uint8_t> binary;
+            messagepack_ext ext;
 
             // constructor of types in union are not implicitly called
             // this is expected as we only construct a single type in the union once we know
