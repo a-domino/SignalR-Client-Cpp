@@ -263,17 +263,17 @@ TEST(json_hub_protocol, parsing_field_order_does_not_matter)
 {
     invocation_message expected("123", "Target", std::vector<value>{ value(true) });
 
-    const std::vector<std::string> payloads = {
+    std::vector<std::string> payloads = {
         "{\"type\":1,\"invocationId\":\"123\",\"arguments\":[true],\"target\":\"Target\"}\x1e",
         "{\"target\":\"Target\",\"invocationId\":\"123\",\"type\":1,\"arguments\":[true]}\x1e",
         "{\"target\":\"Target\",\"arguments\":[true],\"type\":1,\"invocationId\":\"123\"}\x1e"
     };
 
-    for (const auto& payload : payloads)
+    for (auto& payload : payloads)
     {
         auto handler = std::make_shared<test_message_handler>();
         auto parser = json_hub_protocol().create_parser_and_handler(handler);
-        parser->parse_and_handle_messages(payload);
+        parser->parse_and_handle_messages(std::move(payload));
         ASSERT_EQ(1, handler->invocation_messages.size());
         assert_invocation_message_equality(expected, handler->invocation_messages[0]);
     }
@@ -320,54 +320,53 @@ TEST(json_hub_protocol, unknown_message_type_is_ignored)
     ASSERT_EQ(1, handler->ping_messages.size());
 }
 
-// Updated invalid message table matching json_hub_protocol.cpp exceptions
-std::vector<std::pair<std::string, std::string>> invalid_messages
-{
-    { "\x1e", "* Line 1, Column 1\n  Syntax error: value, object or array expected.\n* Line 1, Column 1\n  A valid JSON document must be either an array or an object value.\n" },
-    { "foo\x1e", "* Line 1, Column 1\n  Syntax error: value, object or array expected.\n* Line 1, Column 2\n  Extra non-whitespace after JSON value.\n" },
-    { "[42]\x1e", "Message was not a 'map' type" },
-    { "{\x1e", "* Line 1, Column 2\n  Missing '}' or object member name\n" },
-
-    { "{\"arguments\":[],\"target\":\"send\",\"invocationId\":42}\x1e", "Field 'type' not found" },
-
-    { "{\"type\":1}\x1e", "Field 'target' not found for 'invocation' message" },
-    { "{\"type\":1,\"target\":\"send\",\"invocationId\":42}\x1e", "Field 'arguments' not found for 'invocation' message" },
-    { "{\"type\":1,\"target\":\"send\",\"arguments\":[],\"invocationId\":42}\x1e", "Expected 'invocation' message's 'invocationId' to be of type 'string'" },
-    { "{\"type\":1,\"target\":\"send\",\"arguments\":42,\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'arguments' to be of type 'array'" },
-    { "{\"type\":1,\"target\":true,\"arguments\":[],\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'target' to be of type 'string'" },
-
-    { "{\"type\":3}\x1e", "Field 'invocationId' not found for 'completion' message" },
-    { "{\"type\":3,\"invocationId\":42}\x1e","Expected 'completion' message's 'invocationId' to be of type 'string'" },
-    // Updated string to match json_hub_protocol.cpp line 190
-    { "{\"type\":3,\"invocationId\":\"42\",\"error\":\"foo\",\"result\":true}\x1e", "Found both 'error' and 'result' fields in 'completion' message. The 'error' and 'result' properties are mutually exclusive." },
-
-    { "{\"type\":4}\x1e", "Field 'target' not found for 'stream_invocation' message" },
-    { "{\"type\":4,\"target\":\"send\"}\x1e", "Field 'arguments' not found for 'stream_invocation' message" },
-    { "{\"type\":4,\"target\":123,\"arguments\":[]}\x1e", "Expected 'stream_invocation' message's 'target' to be of type 'string'" },
-    { "{\"type\":4,\"target\":\"send\",\"arguments\":123}\x1e", "Expected 'stream_invocation' message's 'arguments' to be of type 'array'" },
-    { "{\"type\":4,\"target\":\"send\",\"arguments\":[],\"invocationId\":123}\x1e", "Expected 'stream_invocation' message's 'invocationId' to be of type 'string'" },
-
-    { "{\"type\":5}\x1e", "Field 'invocationId' not found for 'cancel_invocation' message" },
-    { "{\"type\":5,\"invocationId\":123}\x1e", "Expected 'cancel_invocation' message's 'invocationId' to be of type 'string'" },
-
-    { "{\"type\":8}\x1e", "Field 'sequenceId' not found in 'ack' message" },
-    { "{\"type\":8,\"sequenceId\":\"not_an_int\"}\x1e", "Expected 'sequenceId' in 'ack' message to be an Int" },
-
-    { "{\"type\":9}\x1e", "Field 'sequenceId' not found in 'sequence' message" },
-    { "{\"type\":9,\"sequenceId\":\"not_an_int\"}\x1e", "Expected 'sequenceId' in 'sequence' message to be an Int" }
-};
-
 TEST(json_hub_protocol, invalid_messages_throw)
 {
+    // Updated invalid message table matching json_hub_protocol.cpp exceptions
+    std::vector<std::pair<std::string, std::string>> invalid_messages
+    {
+        { "\x1e", "* Line 1, Column 1\n  Syntax error: value, object or array expected.\n* Line 1, Column 1\n  A valid JSON document must be either an array or an object value.\n" },
+        { "foo\x1e", "* Line 1, Column 1\n  Syntax error: value, object or array expected.\n* Line 1, Column 2\n  Extra non-whitespace after JSON value.\n" },
+        { "[42]\x1e", "Message was not a 'map' type" },
+        { "{\x1e", "* Line 1, Column 2\n  Missing '}' or object member name\n" },
+
+        { "{\"arguments\":[],\"target\":\"send\",\"invocationId\":42}\x1e", "Field 'type' not found" },
+
+        { "{\"type\":1}\x1e", "Field 'target' not found for 'invocation' message" },
+        { "{\"type\":1,\"target\":\"send\",\"invocationId\":42}\x1e", "Field 'arguments' not found for 'invocation' message" },
+        { "{\"type\":1,\"target\":\"send\",\"arguments\":[],\"invocationId\":42}\x1e", "Expected 'invocation' message's 'invocationId' to be of type 'string'" },
+        { "{\"type\":1,\"target\":\"send\",\"arguments\":42,\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'arguments' to be of type 'array'" },
+        { "{\"type\":1,\"target\":true,\"arguments\":[],\"invocationId\":\"42\"}\x1e", "Expected 'invocation' message's 'target' to be of type 'string'" },
+
+        { "{\"type\":3}\x1e", "Field 'invocationId' not found for 'completion' message" },
+        { "{\"type\":3,\"invocationId\":42}\x1e","Expected 'completion' message's 'invocationId' to be of type 'string'" },
+        // Updated string to match json_hub_protocol.cpp line 190
+        { "{\"type\":3,\"invocationId\":\"42\",\"error\":\"foo\",\"result\":true}\x1e", "Found both 'error' and 'result' fields in 'completion' message. The 'error' and 'result' properties are mutually exclusive." },
+
+        { "{\"type\":4}\x1e", "Field 'target' not found for 'stream_invocation' message" },
+        { "{\"type\":4,\"target\":\"send\"}\x1e", "Field 'arguments' not found for 'stream_invocation' message" },
+        { "{\"type\":4,\"target\":123,\"arguments\":[]}\x1e", "Expected 'stream_invocation' message's 'target' to be of type 'string'" },
+        { "{\"type\":4,\"target\":\"send\",\"arguments\":123}\x1e", "Expected 'stream_invocation' message's 'arguments' to be of type 'array'" },
+        { "{\"type\":4,\"target\":\"send\",\"arguments\":[],\"invocationId\":123}\x1e", "Expected 'stream_invocation' message's 'invocationId' to be of type 'string'" },
+
+        { "{\"type\":5}\x1e", "Field 'invocationId' not found for 'cancel_invocation' message" },
+        { "{\"type\":5,\"invocationId\":123}\x1e", "Expected 'cancel_invocation' message's 'invocationId' to be of type 'string'" },
+
+        { "{\"type\":8}\x1e", "Field 'sequenceId' not found in 'ack' message" },
+        { "{\"type\":8,\"sequenceId\":\"not_an_int\"}\x1e", "Expected 'sequenceId' in 'ack' message to be an Int" },
+
+        { "{\"type\":9}\x1e", "Field 'sequenceId' not found in 'sequence' message" },
+        { "{\"type\":9,\"sequenceId\":\"not_an_int\"}\x1e", "Expected 'sequenceId' in 'sequence' message to be an Int" }
+    };
     int i = -1;
-    for (const auto& pair : invalid_messages)
+    for (auto& pair : invalid_messages)
     {
         ++i;
         try
         {
             auto handler = std::make_shared<test_message_handler>();
             auto parser = json_hub_protocol().create_parser_and_handler(handler);
-            parser->parse_and_handle_messages(pair.first);
+            parser->parse_and_handle_messages(std::move(pair.first));
             FAIL() << "Expected exception for payload: " << pair.first;
         }
         catch (const std::exception& exception)

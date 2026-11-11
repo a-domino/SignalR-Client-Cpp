@@ -6,9 +6,11 @@
 
 #include "_exports.h"
 #include <string>
+#include <utility>
 #include <vector>
 #include <map>
 #include <cstddef>
+#include <cstring>
 
 #ifdef USE_MSGPACK
 #include <msgpack/v3/object_fwd_decl.hpp>
@@ -36,24 +38,58 @@ namespace signalr
      * and a payload of binary data.
      */
     struct messagepack_ext {
-        int8_t type_code{0};
-        std::vector<uint8_t> data;
+        /**
+         * Encapsulates the byte buffer, payload length, and lifetime-tracking parent buffer.
+         */
+        struct payload {
+            const uint8_t *const buff;
+            const size_t size;
+
+            // Keeps the parent transport buffer alive until all references fall out of scope
+            const std::shared_ptr<const void> underlying_buffer;
+
+            bool operator==(const payload& rhs) const {
+                if (size != rhs.size) return false;
+                if (size == 0 || buff == rhs.buff) return true;
+                if (buff == nullptr || rhs.buff == nullptr) return false;
+                return std::memcmp(buff, rhs.buff, size) == 0;
+            }
+            bool operator!=(const payload& rhs) const { return !(*this == rhs); }
+        };
+
+        int8_t type_code;
+        std::shared_ptr<payload> data;
+
+        messagepack_ext() : messagepack_ext(0) {}
+
+        messagepack_ext(const int8_t type_code)
+            : type_code(type_code), data{nullptr} {}
 
         /**
-         * Create an EXT object by moving the given binary payload.
-         *
-         * @param type_code Application- or format-defined extension type identifier (-128 to 127).
-         * @param data Binary payload to take ownership of.
+         * Zero-copy view constructor referencing an external buffer.
          */
-        messagepack_ext(const int8_t type_code, std::vector<uint8_t>&& data)
-            : type_code(type_code), data(std::move(data)) {}
+        messagepack_ext(const int8_t type_code, const payload& data)
+            : type_code(type_code), data(std::make_shared<payload>(data)) {}
+        messagepack_ext(const int8_t type_code, const std::shared_ptr<payload>& data)
+            : type_code(type_code), data(data) {}
 
-        messagepack_ext(const messagepack_ext& other)
-            : type_code(other.type_code), data(std::vector<uint8_t>(other.data)) {}
+        messagepack_ext(const messagepack_ext& other) noexcept = default;
+        messagepack_ext(messagepack_ext&& other) noexcept = default;
 
-        messagepack_ext(messagepack_ext&& other) noexcept : type_code(other.type_code), data(std::move(other.data)) {}
+        messagepack_ext& operator=(const messagepack_ext& other) = default;
+        messagepack_ext& operator=(messagepack_ext&&) noexcept = default;
 
         ~messagepack_ext() = default;
+
+        bool operator==(const messagepack_ext& rhs) const {
+            if (this == &rhs) return true;
+            if (type_code != rhs.type_code) return false;
+            if (data == rhs.data) return true;
+            if (data == nullptr) return rhs.data->size == 0; // rhs.data != null here; it's != data, which is null
+            if (rhs.data == nullptr) return data->size == 0; // data != null here; it's != rhs.data, which is null
+            return *data == *rhs.data;
+        }
+        bool operator!=(const messagepack_ext& rhs) const { return !(*this == rhs); }
     };
 
     /**
@@ -142,19 +178,31 @@ namespace signalr
         /**
          * Creates an object representing a value_type::ext from the given MessagePack ext.
          */
-        SIGNALRCLIENT_API value(const msgpack::object_ext& ext_obj);
+        SIGNALRCLIENT_API value(const msgpack::object_ext& ext_obj, const std::shared_ptr<const void>& underlying_buff);
 
 #endif // USE_MSGPACK
 
         /**
-         * Creates an object representing a value_type::ext from the given type code and data.
+         * Creates an object representing an empty value_type::ext from the given type code.
          */
-        SIGNALRCLIENT_API value(int8_t type_code, const std::vector<uint8_t>& data);
+        SIGNALRCLIENT_API value(int8_t type_code);
 
         /**
          * Creates an object representing a value_type::ext with the given type code and data.
          */
-        SIGNALRCLIENT_API value(int8_t type_code, std::vector<uint8_t>&& data);
+        SIGNALRCLIENT_API value(
+            int8_t type_code, const uint8_t* data, size_t size, const std::shared_ptr<const void>& underlying_buff
+        );
+
+        /**
+         * Creates an object representing a value_type::ext with the given type code and payload.
+         */
+        SIGNALRCLIENT_API value(int8_t type_code, const messagepack_ext::payload& payload);
+
+        /**
+         * Creates an object representing a value_type::ext with the given type code and payload pointer.
+         */
+        SIGNALRCLIENT_API value(int8_t type_code, const std::shared_ptr<messagepack_ext::payload>& payload);
 
         /**
          * Copies an existing value.

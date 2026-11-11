@@ -15,7 +15,7 @@ namespace signalr
 {
 const std::string json_hub_protocol::m_protocol_name = "json";
 
-void json_hub_protocol::parser_and_handler::parse_and_handle_messages(const std::string& msg) const {
+void json_hub_protocol::parser_and_handler::parse_and_handle_messages(std::string&& msg) const {
     size_t offset = 0;
     for (auto pos = msg.find(JSON_MSG_SEP, offset); pos != std::string::npos; pos = msg.find(JSON_MSG_SEP, offset)) {
         parse_and_handle_message(msg.c_str() + offset, pos - offset);

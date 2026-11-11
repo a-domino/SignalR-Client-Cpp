@@ -54,7 +54,6 @@ void displayMap(std::ostream& os, const std::map<K, V>& m) {
     os << "}";
 }
 
-
 template <typename V, typename D = V>
 void displayVector(
     std::ostream& os, const std::vector<V>& v,
@@ -69,6 +68,26 @@ void displayVector(
         }
         os << static_cast<D>(value);
         first = false;
+    }
+
+    os << start_end_delimiters.second;
+}
+
+template <typename V, typename D = V>
+void displayArray(
+    std::ostream& os, V start, V end,
+    const std::pair<std::string, std::string>& start_end_delimiters = {"[", "]"}
+) {
+    os << start_end_delimiters.first;
+
+    bool first = true;
+    while (start != end) {
+        if (!first) {
+            os << ", ";
+        }
+        os << static_cast<D>(*start);
+        first = false;
+        ++start;
     }
 
     os << start_end_delimiters.second;

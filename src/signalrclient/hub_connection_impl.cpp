@@ -1015,6 +1015,7 @@ namespace signalr
 
     void hub_connection_impl::process_response(std::string&& response)
     {
+        bool parsed_response = false;
         try
         {
             if (!m_handshakeReceived)
@@ -1059,16 +1060,23 @@ namespace signalr
             }
 
             reset_server_timeout();
-            m_parser_and_handler->parse_and_handle_messages(response);
+            parsed_response = true;
+            m_parser_and_handler->parse_and_handle_messages(std::move(response));
         }
         catch (const std::exception &e)
         {
             if (m_logger.is_enabled(trace_level::error))
             {
-                m_logger.logv(
-                    trace_level::error,
-                    "Encountered error when processing response: ", e.what(), ". Response: ", response
-                );
+                if (!parsed_response) {
+                    m_logger.logv(
+                        trace_level::error,
+                        "Encountered error when processing response: ", e.what(), ". Response: ", response
+                    );
+                } else {
+                    m_logger.logv(
+                        trace_level::error, "Encountered error when processing response: ", e.what()
+                    );
+                }
             }
 
             // TODO: handle things here better... (e.g., better exception, or having different semantics than having to

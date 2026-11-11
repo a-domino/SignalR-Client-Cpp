@@ -67,7 +67,7 @@ namespace signalr
             new (&mStorage.binary) std::vector<uint8_t>();
             break;
         case value_type::ext:
-            new (&mStorage.ext) messagepack_ext(0, std::vector<uint8_t>());
+            new (&mStorage.ext) messagepack_ext();
             break;
         case value_type::null:
         default:
@@ -137,25 +137,48 @@ namespace signalr
 
 #ifdef USE_MSGPACK
 
-    value::value(const msgpack::object_ext& ext_obj) : mType(value_type::ext) {
+    value::value(
+        const msgpack::object_ext& ext_obj, const std::shared_ptr<const void>& underlying_buff
+    ) : mType(value_type::ext) {
         const auto* const ext_obj_data = reinterpret_cast<const uint8_t*>(ext_obj.data());
         if (ext_obj.size == 0 || ext_obj_data == nullptr) {
-            new (&mStorage.ext) messagepack_ext(ext_obj.type(), std::vector<uint8_t>());
+            new (&mStorage.ext) messagepack_ext(ext_obj.type());
         } else {
             new (&mStorage.ext) messagepack_ext(
-                ext_obj.type(), std::vector<uint8_t>{ext_obj_data, ext_obj_data + ext_obj.size}
+                ext_obj.type(),
+                std::make_shared<messagepack_ext::payload>(
+                    messagepack_ext::payload{ext_obj_data, ext_obj.size, underlying_buff}
+                )
             );
         }
     }
 
 #endif // USE_MSGPACK
 
-    value::value(const int8_t type_code, const std::vector<uint8_t>& data) : mType(value_type::ext) {
-        new (&mStorage.ext) messagepack_ext(type_code, std::vector<uint8_t>(data));
+    value::value(const int8_t type_code) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(type_code);
     }
 
-    value::value(const int8_t type_code, std::vector<uint8_t>&& data) : mType(value_type::ext) {
-        new (&mStorage.ext) messagepack_ext(type_code, std::move(data));
+    value::value(
+        const int8_t type_code, const uint8_t *const data, const size_t size,
+        const std::shared_ptr<const void>& underlying_buff
+    ) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(
+            type_code,
+            std::make_shared<messagepack_ext::payload>(
+                messagepack_ext::payload{data, size, underlying_buff}
+            )
+        );
+    }
+
+    value::value(const int8_t type_code, const messagepack_ext::payload& payload) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(type_code, payload);
+    }
+
+    value::value(
+        const int8_t type_code, const std::shared_ptr<messagepack_ext::payload>& payload
+    ) : mType(value_type::ext) {
+        new (&mStorage.ext) messagepack_ext(type_code, payload);
     }
 
     value::value(const value& rhs)
@@ -489,7 +512,13 @@ namespace signalr
         case signalr::value_type::ext: {
             const auto& ext_value = value.as_ext();
             os << "{type_code: " << static_cast<int>(ext_value.type_code) << ", ";
-            displayVector<uint8_t, int>(os, ext_value.data);
+            if (ext_value.data == nullptr) {
+                os << "[]";
+            } else {
+                displayArray<const uint8_t*, int>(
+                    os, ext_value.data->buff, ext_value.data->buff + ext_value.data->size
+                );
+            }
             os << "}";
         }
         break;

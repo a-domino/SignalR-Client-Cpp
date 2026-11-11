@@ -18,7 +18,7 @@ namespace signalr
             explicit parser_and_handler(const std::shared_ptr<message_handler>& msg_handler)
                     : m_message_handler(msg_handler) {}
 
-            void parse_and_handle_messages(const std::string&) const override;
+            void parse_and_handle_messages(std::string&&) const override;
 
         private:
             const std::shared_ptr<message_handler> m_message_handler;

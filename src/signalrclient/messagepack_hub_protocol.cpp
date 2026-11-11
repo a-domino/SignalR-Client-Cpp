@@ -128,8 +128,12 @@ static void pack_signalr_value(const signalr::value& v, msgpack::packer<string_w
     }
     case signalr::value_type::ext: {
         const auto& ext = v.as_ext();
-        packer.pack_ext(ext.data.size(), ext.type_code);
-        packer.pack_ext_body(reinterpret_cast<const char*>(ext.data.data()), static_cast<uint32_t>(ext.data.size()));
+        if (ext.data != nullptr && ext.data->size > 0) {
+            packer.pack_ext(ext.data->size, ext.type_code);
+            packer.pack_ext_body(reinterpret_cast<const char*>(ext.data->buff), static_cast<uint32_t>(ext.data->size));
+        } else {
+            packer.pack_ext(0, ext.type_code);
+        }
         return;
     }
     case signalr::value_type::null:
@@ -191,7 +195,7 @@ namespace signalr
 {
     const std::string messagepack_hub_protocol::m_protocol_name = "messagepack";
 
-    static signalr::value createValue(const msgpack::object& v)
+    static signalr::value createValue(const msgpack::object& v, const std::shared_ptr<const void>& underlying_buffer)
     {
         switch (v.type)
         {
@@ -211,7 +215,7 @@ namespace signalr
             std::vector<signalr::value> vec;
             for (size_t i = 0; i < v.via.array.size; ++i)
             {
-                vec.push_back(createValue(*(v.via.array.ptr + i)));
+                vec.push_back(createValue(*(v.via.array.ptr + i), underlying_buffer));
             }
             return {std::move(vec)};
         }
@@ -220,8 +224,13 @@ namespace signalr
             std::map<std::string, value> map;
             for (size_t i = 0; i < v.via.map.size; ++i)
             {
-                auto key = (v.via.map.ptr + i)->key.as<std::string>();
-                map.insert({ key, createValue((v.via.map.ptr + i)->val) });
+                std::string key;
+                try {
+                    key = (v.via.map.ptr + i)->key.as<std::string>();
+                } catch (const msgpack::type_error& e) {
+                    throw signalr_exception(std::string("reading map key as string failed: ") + e.what());
+                }
+                map.insert({ key, createValue((v.via.map.ptr + i)->val, underlying_buffer) });
             }
             return {std::move(map)};
         }
@@ -231,7 +240,7 @@ namespace signalr
             return {std::move(vec)};
         }
         case msgpack::type::object_type::EXT: {
-            return {v.via.ext};
+            return {v.via.ext, underlying_buffer};
         }
         case msgpack::type::object_type::NIL:
         default:
@@ -338,10 +347,9 @@ namespace signalr
         packer.pack_int(static_cast<int>(message_type::ping));
 
         binary_message_formatter::write_length_prefix(str.str);
-        return str.str;
+        return std::move(str.str);
     }
 
-    // TODO: When this client is closing, a close message should be sent...
     std::string messagepack_hub_protocol::write_close_message(const close_message* close_msg) const {
         // Close messages have the following structure:
         //   -> [7, Error, AllowReconnect?]
@@ -363,7 +371,7 @@ namespace signalr
         }
 
         binary_message_formatter::write_length_prefix(str.str);
-        return str.str;
+        return std::move(str.str);
     }
 
     std::string messagepack_hub_protocol::write_ack_message(const ack_message* msg) const {
@@ -374,12 +382,13 @@ namespace signalr
         return write_seq_msg<sequence_message>(msg);
     }
 
-    void messagepack_hub_protocol::parser_and_handler::parse_and_handle_messages(const std::string& message) const
+    void messagepack_hub_protocol::parser_and_handler::parse_and_handle_messages(std::string&& message) const
     {
         size_t length_prefix_length;
         size_t length_of_message;
-        const char* remaining_message = message.data();
-        size_t remaining_message_length = message.length();
+        const auto underlying_msg_buff = std::make_shared<const std::string>(std::move(message));
+        const char* remaining_message = underlying_msg_buff->data();
+        size_t remaining_message_length = underlying_msg_buff->length();
 
         while (
             binary_message_parser::try_parse_message(
@@ -392,16 +401,17 @@ namespace signalr
             remaining_message_length -= length_prefix_length;
             assert(remaining_message_length >= length_of_message);
 
-            msgpack::unpacker pac;
-            pac.reserve_buffer(length_of_message);
-            memcpy(pac.buffer(), remaining_message, length_of_message);
-            pac.buffer_consumed(length_of_message);
-            msgpack::object_handle obj_handle;
-
-            if (!pac.next(obj_handle))
-            {
-                throw signalr_exception("messagepack object was incomplete");
-            }
+            bool referenced = false;
+            msgpack::object_handle obj_handle = msgpack::unpack(
+                remaining_message,
+                length_of_message,
+                referenced,
+                // Custom reference function: tells msgpack-c NOT to copy STR, BIN, or EXT
+                // into its internal zone, but to point directly to remaining_message.
+                [](msgpack::type::object_type /*type*/, size_t /*length*/, void* /*user_data*/) -> bool {
+                    return true;
+                }
+            );
 
             auto& msgpack_obj = obj_handle.get();
 
@@ -469,7 +479,7 @@ namespace signalr
                 auto arg_array_index = msgpack_obj_index->via.array.ptr;
                 for (uint32_t i = 0; i < size; ++i)
                 {
-                    args.emplace_back(createValue(*arg_array_index));
+                    args.emplace_back(createValue(*arg_array_index, underlying_msg_buff));
                     ++arg_array_index;
                 }
 
@@ -537,7 +547,7 @@ namespace signalr
                     if (num_elements_of_message < 5) {
                         throw signalr_exception("completion result response has too few properties");
                     }
-                    result = createValue(*msgpack_obj_index);
+                    result = createValue(*msgpack_obj_index, underlying_msg_buff);
                     break;
                 default:
                     throw signalr_exception(
@@ -572,7 +582,7 @@ namespace signalr
                 ++msgpack_obj_index;
 
                 // Item
-                signalr::value item = createValue(*msgpack_obj_index);
+                signalr::value item = createValue(*msgpack_obj_index, underlying_msg_buff);
 
                 m_message_handler->handle_stream_item_message(
                     stream_item_message(std::move(invocation_id), std::move(item))

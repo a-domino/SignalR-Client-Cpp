@@ -14,7 +14,7 @@ using namespace signalr;
 
 std::string remove_date_from_log_entry(const std::string &log_entry)
 {
-    auto date_end_index = log_entry.find_first_of("Z") + 1;
+    auto date_end_index = log_entry.find_first_of('Z') + 1;
     return log_entry.substr(date_end_index + 1);
 }
 
@@ -145,18 +145,13 @@ void assert_signalr_value_equality(const signalr::value& expected, const signalr
     case value_type::ext: {
         const auto& expected_ext = expected.as_ext();
         const auto& actual_ext = actual.as_ext();
-        ASSERT_EQ(expected_ext.type_code, actual_ext.type_code);
-        ASSERT_EQ(expected_ext.data.size(), actual_ext.data.size());
-        for (size_t i(0); i < expected_ext.data.size(); ++i) {
-            ASSERT_EQ(expected_ext.data[i], actual_ext.data[i]);
-        }
+        ASSERT_EQ(expected_ext, actual_ext);
         break;
     }
     case value_type::null:
         break;
     default:
-        FAIL() << "Unhandled value_type in assert_signalr_value_equality";
-        break;
+        FAIL() << "Unhandled value_type in assert_signalr_value_equality";;
     }
 }
 

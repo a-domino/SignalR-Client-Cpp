@@ -159,7 +159,7 @@ namespace signalr
     public:
         class parser_and_handler {
         public:
-            virtual void parse_and_handle_messages(const std::string&) const = 0;
+            virtual void parse_and_handle_messages(std::string&&) const = 0;
             virtual ~parser_and_handler() = default;
         };
 

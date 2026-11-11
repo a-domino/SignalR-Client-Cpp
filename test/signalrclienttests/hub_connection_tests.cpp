@@ -1847,7 +1847,7 @@ public:
     class dummy_parser : public parser_and_handler
     {
     public:
-        void parse_and_handle_messages(const std::string&) const override {}
+        void parse_and_handle_messages(std::string&&) const override {}
     };
 
     std::unique_ptr<parser_and_handler> create_parser_and_handler(
@@ -1914,7 +1914,7 @@ public:
     public:
         explicit parser(std::shared_ptr<message_handler> handler) : m_handler(std::move(handler)) {}
 
-        void parse_and_handle_messages(const std::string& str) const override
+        void parse_and_handle_messages(std::string&& str) const override
         {
             if (str.find("\"target\"") != std::string::npos)
             {
@@ -2121,7 +2121,7 @@ public:
     class parser : public parser_and_handler
     {
     public:
-        void parse_and_handle_messages(const std::string&) const override
+        void parse_and_handle_messages(std::string&&) const override
         {
             throw signalr_exception("unknown message type '100' received");
         }
